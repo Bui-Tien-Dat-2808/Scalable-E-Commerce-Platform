@@ -1,6 +1,6 @@
 import logging
 import os
-
+from contextlib import asynccontextmanager
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
@@ -9,14 +9,26 @@ from sqlalchemy.orm import Session
 
 from services.common.database import Base, engine, get_db
 from services.common.security import get_current_user_id
+from services.common.consul import consul_client
 
 logger = logging.getLogger("order_service")
 
-app = FastAPI(title="Order Service", version="1.0.0")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "order-service")
+SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
+SERVICE_PORT = int(os.getenv("SERVICE_PORT", "8003"))
+INSTANCE_ID = f"{SERVICE_NAME}-{os.getenv('HOSTNAME', 'default')}"
 
-PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8001")
-PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL", "http://payment-service:8004")
-NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8005")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Đăng ký với Consul
+    consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
+    yield
+    # Shutdown: Huỷ đăng ký khỏi Consul
+    consul_client.deregister_service(INSTANCE_ID)
+
+
+app = FastAPI(title="Order Service", version="1.0.0", lifespan=lifespan)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -67,7 +79,8 @@ class OrderCreateRequest(BaseModel):
 
 def _fetch_product(product_id: int) -> dict:
     try:
-        resp = httpx.get(f"{PRODUCT_SERVICE_URL}/products/{product_id}", timeout=5.0)
+        product_service_url = consul_client.resolve_service("product-service")
+        resp = httpx.get(f"{product_service_url}/products/{product_id}", timeout=5.0)
         if resp.status_code == 404:
             raise HTTPException(status_code=400, detail=f"Product {product_id} not found")
         resp.raise_for_status()
@@ -81,8 +94,9 @@ def _fetch_product(product_id: int) -> dict:
 
 def _deduct_stock(product_id: int, quantity: int) -> None:
     try:
+        product_service_url = consul_client.resolve_service("product-service")
         resp = httpx.patch(
-            f"{PRODUCT_SERVICE_URL}/products/{product_id}/deduct-stock",
+            f"{product_service_url}/products/{product_id}/deduct-stock",
             json={"quantity": quantity},
             timeout=5.0,
         )
@@ -100,8 +114,9 @@ def _deduct_stock(product_id: int, quantity: int) -> None:
 
 def _process_payment(order_id: str, amount: float, currency: str, payment_method: str) -> dict:
     try:
+        payment_service_url = consul_client.resolve_service("payment-service")
         resp = httpx.post(
-            f"{PAYMENT_SERVICE_URL}/payments/checkout",
+            f"{payment_service_url}/payments/checkout",
             json={"order_id": order_id, "amount": amount, "currency": currency, "payment_method": payment_method},
             timeout=10.0,
         )
@@ -114,8 +129,9 @@ def _process_payment(order_id: str, amount: float, currency: str, payment_method
 
 def _send_notification(recipient: str, event_type: str, message: str, subject: str) -> None:
     try:
+        notification_service_url = consul_client.resolve_service("notification-service")
         httpx.post(
-            f"{NOTIFICATION_SERVICE_URL}/notifications",
+            f"{notification_service_url}/notifications",
             json={"channel": "email", "recipient": recipient, "subject": subject,
                   "message": message, "event_type": event_type},
             timeout=5.0,

@@ -5,16 +5,19 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 import httpx
 
+from services.common.consul import consul_client
+
 app = FastAPI(title="API Gateway", version="1.0.0")
 
-SERVICE_URLS = {
-    "users": os.getenv("USER_SERVICE_URL", "http://user-service:8000"),
-    "products": os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8001"),
-    "cart": os.getenv("CART_SERVICE_URL", "http://cart-service:8002"),
-    "carts": os.getenv("CART_SERVICE_URL", "http://cart-service:8002"),
-    "orders": os.getenv("ORDER_SERVICE_URL", "http://order-service:8003"),
-    "payments": os.getenv("PAYMENT_SERVICE_URL", "http://payment-service:8004"),
-    "notifications": os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8005"),
+# Map URL path gateway -> Tên service tương ứng trên Consul
+PATH_TO_SERVICE = {
+    "users": "user-service",
+    "products": "product-service",
+    "cart": "cart-service",
+    "carts": "cart-service",
+    "orders": "order-service",
+    "payments": "payment-service",
+    "notifications": "notification-service",
 }
 
 
@@ -84,8 +87,15 @@ async def proxy_root(service: str, request: Request):
 
 @app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy(service: str, path: str, request: Request):
-    if service not in SERVICE_URLS:
+    if service not in PATH_TO_SERVICE:
         raise HTTPException(status_code=404, detail="Service not found")
+
+    # Dynamic lookup via Consul
+    service_name = PATH_TO_SERVICE[service]
+    try:
+        service_url = consul_client.resolve_service(service_name)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
     target_path = build_target_path(service, path)
     body = await request.body()
@@ -94,7 +104,7 @@ async def proxy(service: str, path: str, request: Request):
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.request(
             method=request.method,
-            url=f"{SERVICE_URLS[service]}{target_path}",
+            url=f"{service_url}{target_path}",
             params=request.query_params,
             content=body,
             headers=headers,

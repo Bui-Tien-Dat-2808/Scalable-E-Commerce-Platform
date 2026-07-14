@@ -1,13 +1,30 @@
+import os
 from uuid import uuid4
-
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import Column, String
 from sqlalchemy.orm import Session
 
 from services.common.database import Base, engine, get_db
+from services.common.consul import consul_client
 
-app = FastAPI(title="Notification Service", version="1.0.0")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "notification-service")
+SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
+SERVICE_PORT = int(os.getenv("SERVICE_PORT", "8005"))
+INSTANCE_ID = f"{SERVICE_NAME}-{os.getenv('HOSTNAME', 'default')}"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Đăng ký với Consul
+    consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
+    yield
+    # Shutdown: Huỷ đăng ký khỏi Consul
+    consul_client.deregister_service(INSTANCE_ID)
+
+
+app = FastAPI(title="Notification Service", version="1.0.0", lifespan=lifespan)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
