@@ -6,8 +6,14 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from services.common.consul import consul_client
+from prometheus_fastapi_instrumentator import Instrumentator
+from services.common.logging import setup_logger
+
+logger = setup_logger("api-gateway")
 
 app = FastAPI(title="API Gateway", version="1.0.0")
+# Expose /metrics
+Instrumentator().instrument(app).expose(app)
 
 # Map URL path gateway -> Tên service tương ứng trên Consul
 PATH_TO_SERVICE = {
@@ -98,6 +104,7 @@ async def proxy(service: str, path: str, request: Request):
         raise HTTPException(status_code=503, detail=str(exc))
 
     target_path = build_target_path(service, path)
+    logger.info(f"Proxying {request.method} /{service}/{path} -> {service_url}{target_path}")
     body = await request.body()
     headers = {key: value for key, value in request.headers.items() if key.lower() not in {"host", "content-length"}}
 
@@ -109,6 +116,8 @@ async def proxy(service: str, path: str, request: Request):
             content=body,
             headers=headers,
         )
+
+    logger.info(f"Response from {service_name}: {response.status_code}")
 
     try:
         payload = response.json()

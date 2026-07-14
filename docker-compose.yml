@@ -45,6 +45,8 @@ services:
       - SERVICE_NAME=user-service
       - SERVICE_HOST=user-service
       - SERVICE_PORT=8000
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,6 +67,8 @@ services:
       - SERVICE_NAME=product-service
       - SERVICE_HOST=product-service
       - SERVICE_PORT=8001
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,6 +89,8 @@ services:
       - SERVICE_NAME=cart-service
       - SERVICE_HOST=cart-service
       - SERVICE_PORT=8002
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,6 +111,8 @@ services:
       - SERVICE_NAME=order-service
       - SERVICE_HOST=order-service
       - SERVICE_PORT=8003
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,6 +133,8 @@ services:
       - SERVICE_NAME=payment-service
       - SERVICE_HOST=payment-service
       - SERVICE_PORT=8004
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,6 +155,8 @@ services:
       - SERVICE_NAME=notification-service
       - SERVICE_HOST=notification-service
       - SERVICE_PORT=8005
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -161,6 +173,8 @@ services:
       - "9000:9000"
     environment:
       - CONSUL_URL=http://consul:8500
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       - consul
       - user-service
@@ -169,6 +183,49 @@ services:
       - order-service
       - payment-service
       - notification-service
+
+  # ── PLG / LGP Monitoring & Centralized Logging Stack ────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: ecom-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api-gateway
+
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: ecom-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: ecom-promtail
+    volumes:
+      - ./logs:/app/logs
+      - ./promtail-config.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: ecom-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+      - loki
 
 volumes:
   postgres_data:

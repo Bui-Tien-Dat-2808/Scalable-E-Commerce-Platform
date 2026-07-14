@@ -11,24 +11,31 @@ from services.common.database import Base, engine, get_db
 from services.common.security import get_current_user_id
 from services.common.consul import consul_client
 
-logger = logging.getLogger("order_service")
+from prometheus_fastapi_instrumentator import Instrumentator
+from services.common.logging import setup_logger
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "order-service")
 SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
 SERVICE_PORT = int(os.getenv("SERVICE_PORT", "8003"))
 INSTANCE_ID = f"{SERVICE_NAME}-{os.getenv('HOSTNAME', 'default')}"
 
+logger = setup_logger(SERVICE_NAME)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Starting up order-service...")
     # Startup: Đăng ký với Consul
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
     yield
+    logger.info("Shutting down order-service...")
     # Shutdown: Huỷ đăng ký khỏi Consul
     consul_client.deregister_service(INSTANCE_ID)
 
 
 app = FastAPI(title="Order Service", version="1.0.0", lifespan=lifespan)
+# Expose /metrics
+Instrumentator().instrument(app).expose(app)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
