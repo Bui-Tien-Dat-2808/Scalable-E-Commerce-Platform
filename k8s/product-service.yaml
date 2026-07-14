@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      containers:
+        - name: product-service
+          image: Bui-Tien-Dat-2808/product-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://postgres:postgres@postgres-service:5432/products_db"
+            - name: CONSUL_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ecom-configmap
+                  key: CONSUL_URL
+            - name: SERVICE_NAME
+              value: "product-service"
+            - name: SERVICE_PORT
+              value: "8001"
+            - name: SERVICE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+spec:
+  ports:
+    - port: 8001
+      targetPort: 8001
+  selector:
+    app: product-service

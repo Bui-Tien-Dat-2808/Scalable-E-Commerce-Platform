@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: Bui-Tien-Dat-2808/user-service:latest  # Thay username Docker Hub của bạn
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://postgres:postgres@postgres-service:5432/users_db"
+            - name: CONSUL_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ecom-configmap
+                  key: CONSUL_URL
+            - name: SERVICE_NAME
+              value: "user-service"
+            - name: SERVICE_PORT
+              value: "8000"
+            - name: SERVICE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ecom-secrets
+                  key: JWT_SECRET
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: user-service

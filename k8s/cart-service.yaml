@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cart-service
+  template:
+    metadata:
+      labels:
+        app: cart-service
+    spec:
+      containers:
+        - name: cart-service
+          image: Bui-Tien-Dat-2808/cart-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://postgres:postgres@postgres-service:5432/carts_db"
+            - name: CONSUL_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ecom-configmap
+                  key: CONSUL_URL
+            - name: SERVICE_NAME
+              value: "cart-service"
+            - name: SERVICE_PORT
+              value: "8002"
+            - name: SERVICE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ecom-secrets
+                  key: JWT_SECRET
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart-service
+spec:
+  ports:
+    - port: 8002
+      targetPort: 8002
+  selector:
+    app: cart-service

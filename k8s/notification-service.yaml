@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      containers:
+        - name: notification-service
+          image: Bui-Tien-Dat-2808/notification-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8005
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://postgres:postgres@postgres-service:5432/notifications_db"
+            - name: CONSUL_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ecom-configmap
+                  key: CONSUL_URL
+            - name: SERVICE_NAME
+              value: "notification-service"
+            - name: SERVICE_PORT
+              value: "8005"
+            - name: SERVICE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+spec:
+  ports:
+    - port: 8005
+      targetPort: 8005
+  selector:
+    app: notification-service
