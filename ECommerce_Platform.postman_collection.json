@@ -1,0 +1,714 @@
+{
+  "info": {
+    "name": "Scalable E-Commerce Platform",
+    "description": "Collection test đầy đủ cho E-Commerce Microservices Platform.\n\nHướng dẫn sử dụng:\n1. Import collection này vào Postman\n2. Chạy docker compose up --build\n3. Chạy theo thứ tự từ folder 1 → 5",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:9000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health Check",
+      "item": [
+        {
+          "name": "Gateway Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "description": "Kiểm tra API Gateway đang chạy"
+          }
+        },
+        {
+          "name": "User Service Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/users/health",
+            "description": "Kiểm tra User Service"
+          }
+        },
+        {
+          "name": "Product Service Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/products/health",
+            "description": "Kiểm tra Product Service"
+          }
+        },
+        {
+          "name": "Cart Service Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/cart/health",
+            "description": "Kiểm tra Cart Service"
+          }
+        },
+        {
+          "name": "Order Service Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/orders/health",
+            "description": "Kiểm tra Order Service"
+          }
+        },
+        {
+          "name": "Payment Service Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/payments/health",
+            "description": "Kiểm tra Payment Service"
+          }
+        },
+        {
+          "name": "Notification Service Health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/notifications/health",
+            "description": "Kiểm tra Notification Service"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. User Service",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has user_id', () => pm.expect(pm.response.json()).to.have.property('user_id'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/users/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"email\": \"alice@example.com\",\n  \"password\": \"secret123\"\n}"
+            },
+            "description": "Đăng ký tài khoản mới"
+          }
+        },
+        {
+          "name": "Login → Lưu Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has access_token', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.have.property('access_token');",
+                  "  pm.collectionVariables.set('token', json.access_token);",
+                  "  console.log('Token saved:', json.access_token.substring(0, 30) + '...');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/users/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"alice@example.com\",\n  \"password\": \"secret123\"\n}"
+            },
+            "description": "Đăng nhập. Script tự động lưu token vào biến {{token}}"
+          }
+        },
+        {
+          "name": "Login Sai Mật Khẩu (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/users/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"alice@example.com\",\n  \"password\": \"WRONG_PASSWORD\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Register Email Trùng (expect 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 409 - Duplicate', () => pm.response.to.have.status(409));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/users/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice2\",\n  \"email\": \"alice@example.com\",\n  \"password\": \"another\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Product Catalog",
+      "item": [
+        {
+          "name": "List Products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has products array', () => {",
+                  "  pm.expect(pm.response.json()).to.have.property('products');",
+                  "  pm.expect(pm.response.json().products).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/products",
+            "description": "Xem danh sách sản phẩm (không cần auth)"
+          }
+        },
+        {
+          "name": "Get Product By ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Product ID matches', () => pm.expect(pm.response.json().id).to.equal(1));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/products/1",
+            "description": "Xem chi tiết 1 sản phẩm"
+          }
+        },
+        {
+          "name": "Create Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Product created', () => {",
+                  "  pm.expect(pm.response.json()).to.have.property('id');",
+                  "  pm.expect(pm.response.json().is_active).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/products",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mechanical Keyboard\",\n  \"price\": 149.99,\n  \"stock\": 50\n}"
+            },
+            "description": "Tạo sản phẩm mới"
+          }
+        },
+        {
+          "name": "Update Product",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/products/1",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Laptop Pro\",\n  \"price\": 1199.99,\n  \"stock\": 8\n}"
+            },
+            "description": "Cập nhật thông tin sản phẩm"
+          }
+        },
+        {
+          "name": "Deduct Stock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Stock deducted', () => pm.expect(pm.response.json()).to.have.property('remaining_stock'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/products/1/deduct-stock",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 2\n}"
+            },
+            "description": "Trừ tồn kho (endpoint mới)"
+          }
+        },
+        {
+          "name": "Deduct Stock Quá Số Lượng (expect 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 409 - Insufficient stock', () => pm.response.to.have.status(409));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/products/1/deduct-stock",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 99999\n}"
+            },
+            "description": "Test hết hàng → expect 409"
+          }
+        },
+        {
+          "name": "Delete Product (Soft)",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/products/2",
+            "description": "Xoá mềm sản phẩm"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Shopping Cart",
+      "item": [
+        {
+          "name": "Get Cart",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has items', () => pm.expect(pm.response.json()).to.have.property('items'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/cart",
+            "description": "Xem giỏ hàng của user hiện tại"
+          }
+        },
+        {
+          "name": "Add Item to Cart",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Item added', () => {",
+                  "  const items = pm.response.json().items;",
+                  "  pm.expect(items.some(i => i.product_id === 1)).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/cart/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_id\": 1,\n  \"quantity\": 2\n}"
+            },
+            "description": "Thêm sản phẩm vào giỏ"
+          }
+        },
+        {
+          "name": "Update Cart Item Quantity",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/cart/items/1",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 3\n}"
+            },
+            "description": "Cập nhật số lượng sản phẩm trong giỏ"
+          }
+        },
+        {
+          "name": "Remove Item from Cart",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/cart/items/1",
+            "description": "Xoá sản phẩm khỏi giỏ"
+          }
+        },
+        {
+          "name": "Get Cart Không Có Token (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403 - Unauthorized', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/cart",
+            "description": "Test không có token → expect 403"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Order Flow (Luồng Chính)",
+      "item": [
+        {
+          "name": "Tạo Order → Payment → Notification",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Thêm sản phẩm vào giỏ trước khi tạo order (tùy chọn)",
+                  "console.log('Tạo order với token:', pm.collectionVariables.get('token').substring(0, 20) + '...');"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "pm.test('Order status là PAID', () => {",
+                  "  pm.expect(pm.response.json().status).to.equal('paid');",
+                  "});",
+                  "",
+                  "pm.test('Có transaction_id', () => {",
+                  "  pm.expect(pm.response.json().transaction_id).to.not.be.null;",
+                  "});",
+                  "",
+                  "pm.test('Có total_amount', () => {",
+                  "  pm.expect(pm.response.json().total_amount).to.be.a('number').and.greaterThan(0);",
+                  "});",
+                  "",
+                  "pm.test('Items có tên sản phẩm', () => {",
+                  "  const items = pm.response.json().items;",
+                  "  pm.expect(items[0]).to.have.property('name');",
+                  "  pm.expect(items[0]).to.have.property('price');",
+                  "  pm.expect(items[0]).to.have.property('subtotal');",
+                  "});",
+                  "",
+                  "// Lưu order_id để dùng cho các request tiếp theo",
+                  "if (pm.response.json().id) {",
+                  "  pm.collectionVariables.set('order_id', pm.response.json().id);",
+                  "  console.log('Order ID saved:', pm.response.json().id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\"product_id\": 1, \"quantity\": 1}\n  ],\n  \"payment_method\": \"card\",\n  \"currency\": \"USD\",\n  \"recipient_email\": \"alice@example.com\"\n}"
+            },
+            "description": "⭐ REQUEST QUAN TRỌNG NHẤT\n\nTạo order → Order Service tự động:\n1. Lấy giá từ Product Service\n2. Trừ tồn kho\n3. Gọi Payment Service\n4. Gửi Notification\n\nKết quả: status = 'paid'"
+          }
+        },
+        {
+          "name": "Tạo Order Bị Fail Payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Order status là FAILED_PAYMENT', () => {",
+                  "  pm.expect(pm.response.json().status).to.equal('failed_payment');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\"product_id\": 1, \"quantity\": 1}\n  ],\n  \"payment_method\": \"fail\",\n  \"recipient_email\": \"alice@example.com\"\n}"
+            },
+            "description": "Dùng payment_method = 'fail' để test luồng payment thất bại\n→ status = 'failed_payment'"
+          }
+        },
+        {
+          "name": "List Orders",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has orders array', () => pm.expect(pm.response.json().orders).to.be.an('array'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/orders",
+            "description": "Xem lịch sử đơn hàng"
+          }
+        },
+        {
+          "name": "Get Order Detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/orders/{{order_id}}",
+            "description": "Xem chi tiết đơn hàng (order_id tự động từ bước tạo order)"
+          }
+        },
+        {
+          "name": "Cancel Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Order cancelled', () => {",
+                  "  pm.expect(pm.response.json().status).to.equal('cancelled');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/orders/{{order_id}}/cancel",
+            "description": "Huỷ đơn hàng"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Payment Service",
+      "item": [
+        {
+          "name": "Tạo Payment Thủ Công",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has transaction_id', () => pm.expect(json).to.have.property('transaction_id'));",
+                  "if (json.transaction_id) pm.collectionVariables.set('txn_id', json.transaction_id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/payments/checkout",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_id\": \"ORD-MANUAL-001\",\n  \"amount\": 250.00,\n  \"currency\": \"USD\",\n  \"payment_method\": \"card\"\n}"
+            },
+            "description": "Test Payment Service trực tiếp (không qua Order)"
+          }
+        },
+        {
+          "name": "Get Payment By Transaction ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/payments/{{txn_id}}",
+            "description": "Tra cứu payment theo transaction ID"
+          }
+        },
+        {
+          "name": "Get Payment By Order ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/payments/by-order/ORD-MANUAL-001",
+            "description": "Tra cứu payment theo order ID (endpoint mới)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Notification Service",
+      "item": [
+        {
+          "name": "Tạo Notification Thủ Công",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status queued', () => pm.expect(pm.response.json().status).to.equal('queued'));",
+                  "const json = pm.response.json();",
+                  "if (json.notification_id) pm.collectionVariables.set('ntf_id', json.notification_id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/notifications",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"email\",\n  \"recipient\": \"alice@example.com\",\n  \"subject\": \"Test Notification\",\n  \"message\": \"Đây là notification test thủ công.\",\n  \"event_type\": \"order_paid\"\n}"
+            },
+            "description": "Test Notification Service trực tiếp"
+          }
+        },
+        {
+          "name": "Get Notification",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/notifications/{{ntf_id}}",
+            "description": "Tra cứu notification theo ID"
+          }
+        }
+      ]
+    }
+  ]
+}

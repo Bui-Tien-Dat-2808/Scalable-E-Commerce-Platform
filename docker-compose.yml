@@ -1,0 +1,75 @@
+version: "3.9"
+services:
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: user-service
+    command: python -m uvicorn services.user_service.app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+
+  product-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: product-service
+    command: python -m uvicorn services.product_service.app.main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+
+  cart-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cart-service
+    command: python -m uvicorn services.cart_service.app.main:app --host 0.0.0.0 --port 8002
+    ports:
+      - "8002:8002"
+
+  order-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: order-service
+    command: python -m uvicorn services.order_service.app.main:app --host 0.0.0.0 --port 8003
+    ports:
+      - "8003:8003"
+    environment:
+      - PRODUCT_SERVICE_URL=http://product-service:8001
+      - PAYMENT_SERVICE_URL=http://payment-service:8004
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8005
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: payment-service
+    command: python -m uvicorn services.payment_service.app.main:app --host 0.0.0.0 --port 8004
+    ports:
+      - "8004:8004"
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notification-service
+    command: python -m uvicorn services.notification_service.app.main:app --host 0.0.0.0 --port 8005
+    ports:
+      - "8005:8005"
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    command: python -m uvicorn api_gateway:app --host 0.0.0.0 --port 9000
+    ports:
+      - "9000:9000"
+    environment:
+      - USER_SERVICE_URL=http://user-service:8000
+      - PRODUCT_SERVICE_URL=http://product-service:8001
+      - CART_SERVICE_URL=http://cart-service:8002
+      - ORDER_SERVICE_URL=http://order-service:8003
+      - PAYMENT_SERVICE_URL=http://payment-service:8004
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8005
