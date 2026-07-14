@@ -1,5 +1,23 @@
 version: "3.9"
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ecom-postgres
+    environment:
+      - POSTGRES_MULTIPLE_DATABASES=users_db,products_db,carts_db,orders_db,payments_db,notifications_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   user-service:
     build:
       context: .
@@ -8,6 +26,11 @@ services:
     command: python -m uvicorn services.user_service.app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/users_db
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   product-service:
     build:
@@ -17,6 +40,11 @@ services:
     command: python -m uvicorn services.product_service.app.main:app --host 0.0.0.0 --port 8001
     ports:
       - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/products_db
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   cart-service:
     build:
@@ -26,6 +54,11 @@ services:
     command: python -m uvicorn services.cart_service.app.main:app --host 0.0.0.0 --port 8002
     ports:
       - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/carts_db
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   order-service:
     build:
@@ -36,9 +69,13 @@ services:
     ports:
       - "8003:8003"
     environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/orders_db
       - PRODUCT_SERVICE_URL=http://product-service:8001
       - PAYMENT_SERVICE_URL=http://payment-service:8004
       - NOTIFICATION_SERVICE_URL=http://notification-service:8005
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   payment-service:
     build:
@@ -48,6 +85,11 @@ services:
     command: python -m uvicorn services.payment_service.app.main:app --host 0.0.0.0 --port 8004
     ports:
       - "8004:8004"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/payments_db
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   notification-service:
     build:
@@ -57,6 +99,11 @@ services:
     command: python -m uvicorn services.notification_service.app.main:app --host 0.0.0.0 --port 8005
     ports:
       - "8005:8005"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/notifications_db
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api-gateway:
     build:
@@ -73,3 +120,13 @@ services:
       - ORDER_SERVICE_URL=http://order-service:8003
       - PAYMENT_SERVICE_URL=http://payment-service:8004
       - NOTIFICATION_SERVICE_URL=http://notification-service:8005
+    depends_on:
+      - user-service
+      - product-service
+      - cart-service
+      - order-service
+      - payment-service
+      - notification-service
+
+volumes:
+  postgres_data:

@@ -2,16 +2,15 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from services.cart_service.app.main import app, carts_db
-from services.user_service.app.main import app as user_app, users_db
-
+from services.cart_service.app.main import app
+from services.user_service.app.main import app as user_app
+from services.common.database import Base, engine
 
 client = TestClient(app)
 client_user = TestClient(user_app)
 
 
 def _get_auth_headers(email: str = "cart_user@example.com", username: str = "cart_user") -> dict:
-    users_db.clear()
     client_user.post("/auth/register", json={"username": username, "email": email, "password": "pass123"})
     resp = client_user.post("/auth/login", json={"email": email, "password": "pass123"})
     token = resp.json()["access_token"]
@@ -20,11 +19,10 @@ def _get_auth_headers(email: str = "cart_user@example.com", username: str = "car
 
 @pytest.fixture(autouse=True)
 def clear_state():
-    users_db.clear()
-    carts_db.clear()
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
     yield
-    carts_db.clear()
-    users_db.clear()
+    Base.metadata.drop_all(bind=engine)
 
 
 def test_get_empty_cart():
@@ -112,8 +110,7 @@ def test_add_to_cart_requires_auth():
 
 def test_carts_are_isolated_per_user():
     """Giỏ hàng của user A không ảnh hưởng đến user B."""
-    # Register cả 2 user trong cùng một users_db context để có ID khác nhau
-    users_db.clear()
+    # Đăng ký cả 2 user trong cùng một database context để có ID khác nhau
     client_user.post("/auth/register", json={"username": "user_a", "email": "user_a@example.com", "password": "pass"})
     client_user.post("/auth/register", json={"username": "user_b", "email": "user_b@example.com", "password": "pass"})
 

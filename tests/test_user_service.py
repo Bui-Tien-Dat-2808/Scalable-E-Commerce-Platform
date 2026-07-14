@@ -1,14 +1,18 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from services.user_service.app.main import app
-from services.user_service.app.main import users_db
-
+from services.common.database import Base, engine
 
 client = TestClient(app)
 
 
-def setup_function():
-    users_db.clear()
+@pytest.fixture(autouse=True)
+def setup_db():
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
 
 
 def test_root_route():

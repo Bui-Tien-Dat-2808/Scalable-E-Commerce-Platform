@@ -1,8 +1,10 @@
 """Unit tests for Notification Service."""
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
-from services.notification_service.app.main import app, notifications_db
+from services.notification_service.app.main import app, NotificationModel
+from services.common.database import Base, engine, get_db
 
 
 client = TestClient(app)
@@ -10,9 +12,10 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def clear_state():
-    notifications_db.clear()
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
     yield
-    notifications_db.clear()
+    Base.metadata.drop_all(bind=engine)
 
 
 def test_health_check():
@@ -128,4 +131,10 @@ def test_multiple_notifications_stored():
             "/notifications",
             json={"recipient": f"user{i}@example.com", "message": f"Message {i}"},
         )
-    assert len(notifications_db) == 3
+    # Lấy db session để kiểm tra số bản ghi trong bảng
+    db = next(get_db())
+    try:
+        count = db.query(NotificationModel).count()
+        assert count == 3
+    finally:
+        db.close()

@@ -1,10 +1,29 @@
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import Session
 
+from services.common.database import Base, engine, get_db
 from services.common.security import get_current_user_id
 
 app = FastAPI(title="Shopping Cart Service", version="1.0.0")
 
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+
+class CartItemModel(Base):
+    __tablename__ = "cart_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(50), nullable=False, index=True)
+    product_id = Column(Integer, nullable=False)
+    quantity = Column(Integer, nullable=False)
+
+
+Base.metadata.create_all(bind=engine)
+
+
+# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class CartItemRequest(BaseModel):
     product_id: int
@@ -15,16 +34,17 @@ class CartUpdateRequest(BaseModel):
     quantity: int
 
 
-carts_db: dict[str, dict[int, int]] = {}
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _build_cart_response(user_id: str, db: Session) -> dict:
+    items = db.query(CartItemModel).filter(CartItemModel.user_id == user_id).all()
+    return {
+        "user_id": user_id,
+        "items": [{"product_id": i.product_id, "quantity": i.quantity} for i in items],
+    }
 
 
-def build_cart_response(user_id: str) -> dict:
-    items = [
-        {"product_id": product_id, "quantity": quantity}
-        for product_id, quantity in carts_db.get(user_id, {}).items()
-    ]
-    return {"user_id": user_id, "items": items}
-
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
@@ -37,34 +57,60 @@ def health_check():
 
 
 @app.get("/cart")
-def get_cart(user_id: str = Depends(get_current_user_id)):
-    return build_cart_response(user_id)
+def get_cart(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    return _build_cart_response(user_id, db)
 
 
 @app.post("/cart/items")
-def add_to_cart(payload: CartItemRequest, user_id: str = Depends(get_current_user_id)):
-    cart = carts_db.setdefault(user_id, {})
-    cart[payload.product_id] = cart.get(payload.product_id, 0) + payload.quantity
-    return build_cart_response(user_id)
+def add_to_cart(
+    payload: CartItemRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    existing = db.query(CartItemModel).filter(
+        CartItemModel.user_id == user_id,
+        CartItemModel.product_id == payload.product_id,
+    ).first()
+    if existing:
+        existing.quantity += payload.quantity
+    else:
+        db.add(CartItemModel(user_id=user_id, product_id=payload.product_id, quantity=payload.quantity))
+    db.commit()
+    return _build_cart_response(user_id, db)
 
 
 @app.put("/cart/items/{product_id}")
-def update_cart_item(product_id: int, payload: CartUpdateRequest, user_id: str = Depends(get_current_user_id)):
-    cart = carts_db.setdefault(user_id, {})
-    if product_id not in cart:
+def update_cart_item(
+    product_id: int,
+    payload: CartUpdateRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    item = db.query(CartItemModel).filter(
+        CartItemModel.user_id == user_id,
+        CartItemModel.product_id == product_id,
+    ).first()
+    if not item:
         raise HTTPException(status_code=404, detail="Product not found in cart")
     if payload.quantity <= 0:
         raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
-
-    cart[product_id] = payload.quantity
-    return build_cart_response(user_id)
+    item.quantity = payload.quantity
+    db.commit()
+    return _build_cart_response(user_id, db)
 
 
 @app.delete("/cart/items/{product_id}")
-def delete_cart_item(product_id: int, user_id: str = Depends(get_current_user_id)):
-    cart = carts_db.setdefault(user_id, {})
-    if product_id not in cart:
+def delete_cart_item(
+    product_id: int,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    item = db.query(CartItemModel).filter(
+        CartItemModel.user_id == user_id,
+        CartItemModel.product_id == product_id,
+    ).first()
+    if not item:
         raise HTTPException(status_code=404, detail="Product not found in cart")
-
-    del cart[product_id]
-    return build_cart_response(user_id)
+    db.delete(item)
+    db.commit()
+    return _build_cart_response(user_id, db)

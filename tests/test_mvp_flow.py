@@ -1,19 +1,15 @@
 """MVP flow tests — kiểm tra từng service chạy đúng chức năng cơ bản."""
 from unittest.mock import MagicMock, patch
+import pytest
 from fastapi.testclient import TestClient
 
 from services.user_service.app.main import app as user_app
-from services.user_service.app.main import users_db
-from services.product_service.app.main import app as product_app
-from services.product_service.app.main import products_db
+from services.product_service.app.main import app as product_app, ProductModel
 from services.cart_service.app.main import app as cart_app
-from services.cart_service.app.main import carts_db
 from services.order_service.app.main import app as order_app
-from services.order_service.app.main import orders_db
 from services.payment_service.app.main import app as payment_app
-from services.payment_service.app.main import payments_db, payments_by_order
 from services.notification_service.app.main import app as notification_app
-from services.notification_service.app.main import notifications_db
+from services.common.database import Base, engine, SessionLocal
 
 
 client_user = TestClient(user_app)
@@ -24,17 +20,21 @@ client_payment = TestClient(payment_app)
 client_notification = TestClient(notification_app)
 
 
-def setup_function():
-    users_db.clear()
-    products_db[:] = [
-        {"id": 1, "name": "Laptop", "price": 999.99, "stock": 10, "is_active": True},
-        {"id": 2, "name": "Smartphone", "price": 499.99, "stock": 20, "is_active": True},
-    ]
-    carts_db.clear()
-    orders_db.clear()
-    payments_db.clear()
-    payments_by_order.clear()
-    notifications_db.clear()
+@pytest.fixture(autouse=True)
+def setup_db():
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    
+    # Seed default products
+    with SessionLocal() as db:
+        db.add_all([
+            ProductModel(id=1, name="Laptop", price=999.99, stock=10),
+            ProductModel(id=2, name="Smartphone", price=499.99, stock=20),
+        ])
+        db.commit()
+        
+    yield
+    Base.metadata.drop_all(bind=engine)
 
 
 def _auth_headers() -> dict:
@@ -66,16 +66,18 @@ def test_register_and_login_flow():
 
 
 def test_product_catalog_flow():
+    # Xoá database cho clean hoặc tạo sản phẩm thứ 3
     create_response = client_product.post(
         "/products",
-        json={"name": "Laptop", "price": 999.99, "stock": 10},
+        json={"name": "Tablet", "price": 299.99, "stock": 15},
     )
     assert create_response.status_code == 201
 
     list_response = client_product.get("/products")
     assert list_response.status_code == 200
-    assert any(item["name"] == "Laptop" for item in list_response.json()["products"])
+    assert any(item["name"] == "Tablet" for item in list_response.json()["products"])
 
+    # Update sản phẩm ID=1 (Laptop Pro)
     update_response = client_product.put(
         "/products/1",
         json={"name": "Laptop Pro", "price": 1099.99, "stock": 8},
@@ -83,6 +85,7 @@ def test_product_catalog_flow():
     assert update_response.status_code == 200
     assert update_response.json()["name"] == "Laptop Pro"
 
+    # Soft delete sản phẩm ID=2 (Smartphone)
     delete_response = client_product.delete("/products/2")
     assert delete_response.status_code == 200
     assert delete_response.json()["product"]["is_active"] is False
@@ -162,7 +165,6 @@ def test_order_flow_with_mocked_services():
 
     assert order_response.status_code == 201
     order_data = order_response.json()
-    # Status phải là "paid" thay vì "created" như trước
     assert order_data["status"] == "paid"
     assert order_data["transaction_id"] == "TXN-MVP01"
 

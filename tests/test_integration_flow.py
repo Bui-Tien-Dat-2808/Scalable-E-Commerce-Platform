@@ -7,12 +7,13 @@ import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
-from services.user_service.app.main import app as user_app, users_db
-from services.product_service.app.main import app as product_app, products_db
-from services.cart_service.app.main import app as cart_app, carts_db
-from services.order_service.app.main import app as order_app, orders_db
-from services.payment_service.app.main import app as payment_app, payments_db, payments_by_order
-from services.notification_service.app.main import app as notification_app, notifications_db
+from services.user_service.app.main import app as user_app
+from services.product_service.app.main import app as product_app, ProductModel
+from services.cart_service.app.main import app as cart_app
+from services.order_service.app.main import app as order_app
+from services.payment_service.app.main import app as payment_app
+from services.notification_service.app.main import app as notification_app
+from services.common.database import Base, engine, SessionLocal
 
 
 client_user = TestClient(user_app)
@@ -25,24 +26,19 @@ client_notification = TestClient(notification_app)
 
 @pytest.fixture(autouse=True)
 def reset_all():
-    users_db.clear()
-    products_db[:] = [
-        {"id": 1, "name": "Laptop", "price": 999.99, "stock": 10, "is_active": True},
-        {"id": 2, "name": "Smartphone", "price": 499.99, "stock": 20, "is_active": True},
-    ]
-    carts_db.clear()
-    orders_db.clear()
-    payments_db.clear()
-    payments_by_order.clear()
-    notifications_db.clear()
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    
+    # Seed products cho integration test
+    with SessionLocal() as db:
+        db.add_all([
+            ProductModel(id=1, name="Laptop", price=999.99, stock=10),
+            ProductModel(id=2, name="Smartphone", price=499.99, stock=20),
+        ])
+        db.commit()
+        
     yield
-    users_db.clear()
-    products_db[:] = []
-    carts_db.clear()
-    orders_db.clear()
-    payments_db.clear()
-    payments_by_order.clear()
-    notifications_db.clear()
+    Base.metadata.drop_all(bind=engine)
 
 
 def _register_and_login(email: str, username: str, password: str = "secret123") -> dict:
@@ -139,7 +135,7 @@ class TestFullOrderFlow:
         assert any(o["order_id"] == order["order_id"] for o in list_resp.json()["orders"])
 
     def test_order_payment_failed_status_reflects_failure(self):
-        """Nếu payment fail, order status = failed_payment."""
+        """If payment fail, order status = failed_payment."""
         headers = _register_and_login("bob@test.com", "bob")
 
         with patch.multiple(

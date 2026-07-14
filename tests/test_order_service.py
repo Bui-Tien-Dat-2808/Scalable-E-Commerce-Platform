@@ -3,8 +3,9 @@ import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
-from services.order_service.app.main import app, orders_db
-from services.user_service.app.main import app as user_app, users_db
+from services.order_service.app.main import app
+from services.user_service.app.main import app as user_app
+from services.common.database import Base, engine
 
 
 client = TestClient(app)
@@ -14,7 +15,6 @@ client_user = TestClient(user_app)
 # ─── Fixtures ───────────────────────────────────────────────────────────────
 
 def _get_auth_headers(email: str = "order_user@example.com", username: str = "order_user") -> dict:
-    users_db.clear()
     client_user.post("/auth/register", json={"username": username, "email": email, "password": "pass123"})
     resp = client_user.post("/auth/login", json={"email": email, "password": "pass123"})
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
@@ -35,19 +35,16 @@ def _mock_payment_failed(order_id: str = "ORD-1", amount: float = 999.99):
 
 @pytest.fixture(autouse=True)
 def clear_state():
-    users_db.clear()
-    orders_db.clear()
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
     yield
-    orders_db.clear()
-    users_db.clear()
+    Base.metadata.drop_all(bind=engine)
 
 
 # ─── Helper: patch tất cả HTTP calls trong order_service ─────────────────────
 
 def _patch_services(product_data=None, deduct_ok=True, payment_data=None):
     """Context manager mock toàn bộ httpx calls trong order service."""
-    import services.order_service.app.main as order_mod
-
     product = product_data or _mock_product()
     payment = payment_data or _mock_payment_approved()
 
@@ -194,7 +191,6 @@ def test_get_order_not_found():
 
 def test_get_order_forbidden_for_other_user():
     # Register cả 2 user trong cùng users_db context để có ID khác nhau
-    users_db.clear()
     client_user.post("/auth/register", json={"username": "ua", "email": "ua@test.com", "password": "pass"})
     client_user.post("/auth/register", json={"username": "ub", "email": "ub@test.com", "password": "pass"})
     login_a = client_user.post("/auth/login", json={"email": "ua@test.com", "password": "pass"})

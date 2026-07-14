@@ -2,7 +2,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from services.payment_service.app.main import app, payments_db, payments_by_order
+from services.payment_service.app.main import app
+from services.common.database import Base, engine
 
 
 client = TestClient(app)
@@ -10,11 +11,10 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def clear_state():
-    payments_db.clear()
-    payments_by_order.clear()
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
     yield
-    payments_db.clear()
-    payments_by_order.clear()
+    Base.metadata.drop_all(bind=engine)
 
 
 def test_health_check():
