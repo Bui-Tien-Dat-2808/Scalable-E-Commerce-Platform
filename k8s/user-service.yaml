@@ -12,6 +12,17 @@ spec:
       labels:
         app: user-service
     spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres-service -p 5432 -U postgres; do
+                echo "Waiting for postgres..."
+                sleep 2
+              done
       containers:
         - name: user-service
           image: dat2808/user-service:latest
