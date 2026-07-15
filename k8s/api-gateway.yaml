@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: Bui-Tien-Dat-2808/api-gateway:latest
+          image: dat2808/api-gateway:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "uvicorn", "api_gateway:app", "--host", "0.0.0.0", "--port", "9000"]
           ports:

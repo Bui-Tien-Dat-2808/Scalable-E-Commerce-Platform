@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: product-service
-          image: Bui-Tien-Dat-2808/product-service:latest
+          image: dat2808/product-service:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "uvicorn", "services.product_service.app.main:app", "--host", "0.0.0.0", "--port", "8001"]
           ports:

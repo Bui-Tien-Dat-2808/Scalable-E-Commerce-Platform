@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: notification-service
-          image: Bui-Tien-Dat-2808/notification-service:latest
+          image: dat2808/notification-service:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "uvicorn", "services.notification_service.app.main:app", "--host", "0.0.0.0", "--port", "8005"]
           ports:
