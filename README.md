@@ -1,3 +1,7 @@
+# Project page URL
+
+https://roadmap.sh/projects/scalable-ecommerce-platform
+
 # Scalable E-Commerce Platform
 
 A production-grade microservices e-commerce platform built with **FastAPI**, **Docker**, and **Kubernetes**.  
