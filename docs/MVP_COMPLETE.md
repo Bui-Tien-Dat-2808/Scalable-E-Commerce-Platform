@@ -195,7 +195,13 @@ Scalable E-Commerce Platform/
 ├── Dockerfile                                # Container image
 ├── requirements.txt                          # Python dependencies
 ├── README.md                                 # Full documentation
-├── validate_mvp.ps1                          # E2E test script
+├── scripts/
+│   ├── validate_mvp.ps1                      # E2E validation script
+│   ├── test_e2e.ps1                          # E2E test script
+│   └── test_mvp_e2e.ps1                      # MVP E2E test script
+├── docs/
+│   ├── QUICK_START.md                        # Quick start guide
+│   └── ECommerce_Platform.postman_collection.json  # Postman collection
 └── tests/
     ├── test_user_service.py
     ├── test_mvp_flow.py

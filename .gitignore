@@ -28,8 +28,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Docker
-*.log
+# Docker & Logs (keep directory structure but ignore log files)
+logs/*.log
+!logs/.gitkeep
 
 # Database files (SQLite test DB)
 *.db
