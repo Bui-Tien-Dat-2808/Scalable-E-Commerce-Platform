@@ -1,313 +1,393 @@
 # Scalable E-Commerce Platform
 
-This project is a microservices-based e-commerce platform using FastAPI and Docker, featuring a complete MVP with user registration, product catalog, shopping cart, and order management.
+A production-grade microservices e-commerce platform built with **FastAPI**, **Docker**, and **Kubernetes**.  
+Features service discovery, centralized logging, real-time metrics, persistent storage, automated CI/CD, and container orchestration.
 
-## 🏗️ Architecture
+---
 
-### Services (7 total)
-- **User Service** (port 8000): User registration, authentication, login
-- **Product Catalog Service** (port 8001): Product listing, creation, inventory management
-- **Cart Service** (port 8002): Shopping cart management per user
-- **Order Service** (port 8003): Order creation and tracking
-- **Payment Service** (port 8004): Payment processing stub
-- **Notification Service** (port 8005): Email/SMS notification stub
-- **API Gateway** (port 9000): Single entry point for all services with smart routing
+## 🏗️ Architecture Overview
 
-### Stack
-- **Framework**: FastAPI 0.111.0
-- **Runtime**: Python 3.11-slim, Uvicorn 0.30.0
-- **Validation**: Pydantic 2.13.4
-- **Storage**: In-memory (MVP) / Ready for PostgreSQL migration
-- **Orchestration**: Docker & Docker Compose
-- **Testing**: Pytest 8.3.2
+```
+Client (Postman / Browser)
+        │
+        ▼
+┌───────────────────┐
+│   API Gateway     │  :9000  ← single entry point, dynamic routing via Consul
+└───────┬───────────┘
+        │  discovers service addresses from Consul
+        ▼
+┌───────────────────────────────────────────────────────────┐
+│                   Consul Service Registry  :8500           │
+└───────────────────────────────────────────────────────────┘
+        │
+        ├── User Service          :8000  (users_db)
+        ├── Product Service       :8001  (products_db)
+        ├── Cart Service          :8002  (carts_db)
+        ├── Order Service         :8003  (orders_db)
+        ├── Payment Service       :8004  (payments_db)
+        └── Notification Service  :8005  (notifications_db)
+                │
+                ▼
+        PostgreSQL :5432  (6 separate databases on one instance)
 
-## 🚀 Quick Start
-
-### Option 1: Docker (Recommended)
-```bash
-docker compose up --build
+Monitoring Stack:
+  Prometheus  :9090  ← scrapes /metrics from all 7 services
+  Grafana     :3000  ← dashboards for metrics + logs
+  Loki        :3100  ← log aggregation
+  Promtail           ← tails ./logs/*.log → pushes to Loki
 ```
 
-All services will start automatically on localhost:
-- User Service: http://localhost:8000
-- Product Service: http://localhost:8001
-- Cart Service: http://localhost:8002
-- Order Service: http://localhost:8003
-- Payment Service: http://localhost:8004
-- Notification Service: http://localhost:8005
-- **API Gateway: http://localhost:9000** (primary entry point)
+---
 
-### Option 2: Local Development
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | FastAPI 0.111.0 |
+| Runtime | Python 3.11-slim, Uvicorn 0.30.0 |
+| Database | PostgreSQL 16 (database-per-service) |
+| ORM | SQLAlchemy 2.x + psycopg2-binary |
+| Service Discovery | Consul 1.16 |
+| Monitoring | Prometheus + Grafana + Loki + Promtail |
+| Orchestration | Docker Compose / Kubernetes |
+| CI/CD | GitHub Actions (pytest on push/PR) |
+| Testing | Pytest 8.3.2 (77 test cases) |
+| Auth | JWT (python-jose) |
+
+---
+
+## 🚀 Quick Start — Docker Compose (Recommended)
+
+### 1. Clone & Start
+
+```bash
+git clone https://github.com/Bui-Tien-Dat-2808/Scalable-E-Commerce-Platform.git
+cd Scalable-E-Commerce-Platform
+
+docker compose up --build -d
+```
+
+### 2. Verify all services are running
+
+```bash
+docker compose ps
+```
+
+Expected: all 13 containers showing `Up` / `Up (healthy)`.
+
+### 3. Test via API Gateway
+
+```
+API Gateway:          http://localhost:9000
+Consul UI:            http://localhost:8500
+Prometheus UI:        http://localhost:9090
+Grafana UI:           http://localhost:3000  (admin / admin)
+```
+
+### 4. Import Postman Collection
+
+Import `docs/ECommerce_Platform.postman_collection.json` into Postman.  
+Set Collection variable `base_url = http://localhost:9000` and run requests in order.
+
+### 5. Stop
+
+```bash
+docker compose down
+```
+
+> Data is **persisted** in the `postgres_data` Docker volume — restarting does NOT lose data.
+
+---
+
+## ☸️ Kubernetes Deployment (Docker Desktop)
+
+### Prerequisites
+- Docker Desktop with **Kubernetes enabled** (Settings → Kubernetes → Enable Kubernetes)
+
+### Deploy
+
+```bash
+# Apply all manifests
+kubectl apply -f k8s/
+
+# Watch pods come up
+kubectl get pods -w
+```
+
+### Access API Gateway on Kubernetes
+
+**Option A — Port Forward (reliable on Windows/WSL2):**
+```bash
+kubectl port-forward service/api-gateway-service 9000:9000
+```
+Then use `http://localhost:9000` in Postman as normal.
+
+**Option B — NodePort (may require cluster reset on Windows):**
+```
+http://localhost:30000
+```
+> If NodePort `:30000` returns `ECONNREFUSED`, use port-forward (Option A) instead.  
+> To fix NodePort: Docker Desktop → Settings → Kubernetes → **Reset Kubernetes Cluster** → `kubectl apply -f k8s/`
+
+### Kubernetes Architecture
+
+Each microservice Deployment uses the **Downward API** to inject Pod IP into Consul registration:
+```yaml
+env:
+  - name: SERVICE_HOST
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+```
+This ensures Consul always has the correct Pod IP even when K8s reschedules pods.
+
+### Teardown
+
+```bash
+kubectl delete -f k8s/
+```
+
+---
+
+## 📁 Project Structure
+
+```
+.
+├── api_gateway.py                  # API Gateway — dynamic routing via Consul
+├── docker-compose.yml              # Full stack: 7 services + Postgres + Consul + LGP
+├── Dockerfile                      # Single image for all Python services
+├── init-multiple-databases.sh      # Creates 6 PostgreSQL databases on startup
+├── requirements.txt                # Python dependencies
+├── README.md
+│
+├── services/
+│   ├── common/
+│   │   ├── consul.py               # Consul register/deregister + static fallback
+│   │   ├── database.py             # SQLAlchemy engine + session factory
+│   │   ├── logging.py              # Shared RotatingFileHandler logger
+│   │   └── security.py            # JWT encode/decode helpers
+│   ├── user_service/app/main.py
+│   ├── product_service/app/main.py
+│   ├── cart_service/app/main.py
+│   ├── order_service/app/main.py
+│   ├── payment_service/app/main.py
+│   └── notification_service/app/main.py
+│
+├── tests/                          # 77 test cases — run independently (SQLite in-memory)
+│   ├── test_user_service.py
+│   ├── test_product_service.py     # (via test_mvp_flow.py)
+│   ├── test_cart_service.py
+│   ├── test_order_service.py
+│   ├── test_payment_service.py
+│   ├── test_notification_service.py
+│   ├── test_gateway.py
+│   ├── test_mvp_flow.py
+│   └── test_integration_flow.py
+│
+├── k8s/                            # Kubernetes manifests
+│   ├── configmap.yaml
+│   ├── secrets.yaml
+│   ├── postgres.yaml               # Deployment + PVC + Service
+│   ├── db-init-configmap.yaml      # Init script for 6 databases
+│   ├── consul.yaml
+│   ├── api-gateway.yaml            # NodePort :30000
+│   ├── user-service.yaml
+│   ├── product-service.yaml
+│   ├── cart-service.yaml
+│   ├── order-service.yaml
+│   ├── payment-service.yaml
+│   └── notification-service.yaml
+│
+├── monitoring/
+│   ├── prometheus.yml              # Scrape config for all 7 /metrics endpoints
+│   ├── promtail-config.yml         # Tail ./logs/*.log → push to Loki
+│   └── grafana/
+│       └── provisioning/
+│           └── datasources/
+│               └── datasources.yml # Auto-provision Prometheus + Loki data sources
+│
+├── docs/
+│   ├── QUICK_START.md
+│   ├── MVP_COMPLETE.md
+│   └── ECommerce_Platform.postman_collection.json
+│
+├── scripts/
+│   ├── test_e2e.ps1
+│   ├── test_mvp_e2e.ps1
+│   └── validate_mvp.ps1
+│
+├── logs/                           # Runtime logs (gitignored except .gitkeep)
+│   └── .gitkeep
+│
+└── .github/
+    └── workflows/
+        └── ci.yml                  # GitHub Actions: pytest on push/PR to main
+```
+
+---
+
+## 🔌 API Reference
+
+All requests go through the API Gateway at `http://localhost:9000`.  
+Auth-required endpoints need header: `Authorization: Bearer <token>`
+
+### Health Checks
+```
+GET  /health                        → Gateway status
+GET  /users/health                  → User Service
+GET  /products/health               → Product Service
+GET  /cart/health                   → Cart Service
+GET  /orders/health                 → Order Service
+GET  /payments/health               → Payment Service
+GET  /notifications/health          → Notification Service
+```
+
+### User Service
+```
+POST /users/auth/register           → Register new user
+POST /users/auth/login              → Login, returns JWT access_token
+```
+
+### Product Service
+```
+GET  /products                      → List all products
+GET  /products/{id}                 → Get product by ID
+POST /products                      → Create product
+PUT  /products/{id}/deduct-stock    → Deduct inventory (called by Order Service)
+```
+
+### Shopping Cart  *(auth required)*
+```
+GET    /cart                        → View current user's cart
+POST   /cart/items                  → Add item { product_id, quantity }
+PUT    /cart/items/{product_id}     → Update quantity
+DELETE /cart/items/{product_id}     → Remove item
+```
+
+### Order Service  *(auth required)*
+```
+POST   /orders                      → Create order { items: [{product_id, quantity}] }
+GET    /orders                      → List current user's orders
+GET    /orders/{id}                 → Order detail
+PATCH  /orders/{id}/cancel          → Cancel order
+```
+
+### Payment Service
+```
+POST   /payments/checkout           → Process payment { order_id, amount, payment_method }
+GET    /payments/{transaction_id}   → Get by transaction ID
+GET    /payments/order/{order_id}   → Get by order ID
+```
+
+### Notification Service
+```
+POST   /notifications               → Create notification { user_id, message, event_type }
+GET    /notifications/{id}          → Get notification by ID
+```
+
+### Metrics (Prometheus)
+```
+GET  /metrics                       → Available on each service's direct port (8000-8005, 9000)
+```
+
+---
+
+## 🧪 Testing
+
+Tests run **independently** of Docker — they use SQLite in-memory and mock all external calls.
+
 ```bash
 # Setup
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-# Run tests
-pytest
+# Run all 77 tests
+pytest tests/ -v
 
-# Start individual services in separate terminals
-uvicorn services.user_service.app.main:app --reload
-uvicorn services.product_service.app.main:app --host 0.0.0.0 --port 8001 --reload
-uvicorn services.cart_service.app.main:app --host 0.0.0.0 --port 8002 --reload
-uvicorn services.order_service.app.main:app --host 0.0.0.0 --port 8003 --reload
-uvicorn services.payment_service.app.main:app --host 0.0.0.0 --port 8004 --reload
-uvicorn services.notification_service.app.main:app --host 0.0.0.0 --port 8005 --reload
-uvicorn api_gateway:app --host 0.0.0.0 --port 9000 --reload
+# Run specific module
+pytest tests/test_order_service.py -v
+
+# Run with short traceback
+pytest tests/ --tb=short
 ```
 
-## 📋 MVP Features
+### CI/CD
 
-### User Management
-- **POST** `/users/auth/register` - Register new user
-  ```powershell
-  $body = @{username="alice"; email="alice@example.com"; password="pass123"} | ConvertTo-Json
-  Invoke-RestMethod -Method Post -Uri "http://localhost:9000/users/auth/register" `
-    -ContentType 'application/json' -Body $body
-  ```
-  Response: `{"username":"alice","email":"alice@example.com"}`
+Every push and PR to `main` automatically triggers the full test suite on GitHub Actions.  
+See: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
-- **POST** `/users/auth/login` - Login user
-  ```powershell
-  $body = @{email="alice@example.com"; password="pass123"} | ConvertTo-Json
-  Invoke-RestMethod -Method Post -Uri "http://localhost:9000/users/auth/login" `
-    -ContentType 'application/json' -Body $body
-  ```
-  Response: `{"access_token":"<jwt>","token_type":"bearer","user":{"id":1,"username":"alice","email":"alice@example.com"}}`
+---
 
-### Product Catalog
-- **GET** `/products` - List all products (seeded with Laptop, Smartphone)
-  ```powershell
-  Invoke-RestMethod -Method Get -Uri "http://localhost:9000/products"
-  ```
-  Response: `{"products":[{"id":1,"name":"Laptop","price":999.99,"stock":10},...]}` 
+## 📊 Monitoring & Logging
 
-- **POST** `/products` - Create new product
-  ```powershell
-  $body = @{name="Monitor"; price=299.99; stock=15} | ConvertTo-Json
-  Invoke-RestMethod -Method Post -Uri "http://localhost:9000/products" `
-    -ContentType 'application/json' -Body $body
-  ```
+### Grafana Dashboards (`http://localhost:3000`)
+- **Data Source: Prometheus** — total request count, request rate per service
+- **Data Source: Loki** — centralized logs from all 7 services
 
-### Shopping Cart
-- **GET** `/cart` - View current user's cart
-  ```powershell
-  Invoke-RestMethod -Method Get -Uri "http://localhost:9000/cart" `
-    -Headers @{Authorization="Bearer $token"}
-  ```
+### Prometheus (`http://localhost:9090`)
+- Query: `http_requests_total` — total requests per service
+- Query: `rate(http_requests_total[1m])` — real-time request rate
 
-- **POST** `/cart/items` - Add item to cart
-  ```powershell
-  $body = @{product_id=1; quantity=2} | ConvertTo-Json
-  Invoke-RestMethod -Method Post -Uri "http://localhost:9000/cart/items" `
-    -Headers @{Authorization="Bearer $token"} `
-    -ContentType 'application/json' -Body $body
-  ```
+### Log Files
+Each service writes rotating logs to `./logs/<service-name>.log`.  
+Promtail tails these files and ships them to Loki for querying in Grafana Explore.
 
-- **PUT** `/cart/items/{product_id}` - Update quantity
-  ```powershell
-  $body = @{quantity=3} | ConvertTo-Json
-  Invoke-RestMethod -Method Put -Uri "http://localhost:9000/cart/items/1" `
-    -Headers @{Authorization="Bearer $token"} `
-    -ContentType 'application/json' -Body $body
-  ```
+---
 
-- **DELETE** `/cart/items/{product_id}` - Remove item
-  ```powershell
-  Invoke-RestMethod -Method Delete -Uri "http://localhost:9000/cart/items/1" `
-    -Headers @{Authorization="Bearer $token"}
-  ```
+## 🔎 Troubleshooting
 
-### Order Management
-- **POST** `/orders` - Create order
-  ```powershell
-  $body = @{items=@(@{product_id=1;quantity=1})} | ConvertTo-Json -Depth 10
-  Invoke-RestMethod -Method Post -Uri "http://localhost:9000/orders" `
-    -Headers @{Authorization="Bearer $token"} `
-    -ContentType 'application/json' -Body $body
-  ```
-  Response: `{"id":1,"order_id":"ORD-1","user_id":"1","items":[...],"status":"created"}`
-
-- **GET** `/orders` - List current user's orders
-- **GET** `/orders/{id}` - View order details
-- **PATCH** `/orders/{id}/cancel` - Cancel an order
-
-## 🧪 Run Full End-to-End Test
-
-```powershell
-# PowerShell script to test complete flow
-$ts = Get-Date -Format "HHmmss"
-$email = "user$ts@example.com"
-
-# 1. Register
-$reg = @{username="user$ts"; email=$email; password="Pass123!"} | ConvertTo-Json
-$user = Invoke-RestMethod -Method Post -Uri "http://localhost:9000/users/auth/register" `
-  -ContentType 'application/json' -Body $reg
-Write-Host "✓ Registered: $($user.username)"
-
-# 2. Login
-$login = @{email=$email; password="Pass123!"} | ConvertTo-Json
-$auth = Invoke-RestMethod -Method Post -Uri "http://localhost:9000/users/auth/login" `
-  -ContentType 'application/json' -Body $login
-Write-Host "✓ Logged in with token: $($auth.access_token.Substring(0,15))..."
-
-# 3. Get products
-$products = Invoke-RestMethod -Method Get -Uri "http://localhost:9000/products"
-Write-Host "✓ Found $($products.products.Count) products"
-
-# 4. Add to cart
-$cart = @{product_id=1; quantity=2} | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "http://localhost:9000/cart/items" `
-  -Headers @{Authorization="Bearer $($auth.access_token)"} `
-  -ContentType 'application/json' -Body $cart
-Write-Host "✓ Added item to cart"
-
-# 5. Create order
-$order = @{items=@(@{product_id=1;quantity=1})} | ConvertTo-Json -Depth 10
-$result = Invoke-RestMethod -Method Post -Uri "http://localhost:9000/orders" `
-  -Headers @{Authorization="Bearer $($auth.access_token)"} `
-  -ContentType 'application/json' -Body $order
-Write-Host "✓ Order $($result.order_id) created successfully"
-```
-
-## 📁 Project Structure
-```
-.
-├── services/
-│   ├── user_service/
-│   │   └── app/main.py           # Registration, login endpoints
-│   ├── product_service/
-│   │   └── app/main.py           # Products CRUD with seeded data
-│   ├── cart_service/
-│   │   └── app/main.py           # Shopping cart per user
-│   ├── order_service/
-│   │   └── app/main.py           # Order creation/tracking
-│   ├── payment_service/
-│   │   └── app/main.py           # Payment processing stub
-│   └── notification_service/
-│       └── app/main.py           # Email notification stub
-├── api_gateway.py                # API Gateway with smart routing
-├── docker-compose.yml            # 7-service orchestration
-├── Dockerfile                    # Multi-service Docker image
-├── requirements.txt              # Python dependencies
-├── README.md                     # This file
-└── tests/
-    ├── test_user_service.py      # User service tests
-    ├── test_mvp_flow.py          # Integration flow tests
-    └── test_gateway.py           # Gateway routing tests
-```
-
-## 🔌 API Gateway Routing
-
-The API Gateway automatically routes requests to the correct service based on the first path segment:
-
-```
-/users/*          → User Service (8000)
-/products/*       → Product Service (8001)
-/cart/*           → Cart Service (8002)
-/orders/*         → Order Service (8003)
-/payments/*       → Payment Service (8004)
-/notifications/*  → Notification Service (8005)
-```
-
-**Important**: All routes must include the service prefix when calling through the gateway.
-
-### Gateway Examples
-```powershell
-# Gateway routes (use service prefix)
-POST   /users/auth/register          → User Service
-POST   /users/auth/login             → User Service
-GET    /products                     → Product Service
-POST   /products                     → Product Service
-GET    /cart                         → Cart Service
-POST   /cart/items                   → Cart Service
-PUT    /cart/items/{product_id}      → Cart Service
-DELETE /cart/items/{product_id}      → Cart Service
-POST   /orders                       → Order Service
-GET    /orders                       → Order Service
-GET    /orders/{id}                  → Order Service
-PATCH  /orders/{id}/cancel           → Order Service
-
-# Direct service access (optional, without gateway)
-POST   http://localhost:8000/auth/register     # Direct to user-service
-GET    http://localhost:8001/products          # Direct to product-service
-```
-
-## 📊 Seeded Data
-
-The MVP includes pre-populated product catalog:
-- **Laptop**: $999.99 (10 in stock)
-- **Smartphone**: $499.99 (20 in stock)
-
-## 🔄 In-Memory Storage
-
-Currently, all services use in-memory storage (Python dicts/lists):
-- User data resets on service restart
-- Products initialize with seed data
-- Carts reset on restart
-- Orders reset on restart
-
-Perfect for MVP testing. **Next Phase**: PostgreSQL integration for persistence.
-
-## 🧪 Testing
-
+### Services not responding
 ```bash
-# Run all tests
-pytest
-
-# Run specific test
-pytest tests/test_user_service.py
-
-# Run with coverage
-pytest --cov=services --cov=api_gateway
+docker compose ps            # Check all containers are Up
+docker compose logs api-gateway --tail=50
+docker compose restart <service-name>
 ```
 
-### Test Files
-- `tests/test_user_service.py` - User service unit tests
-- `tests/test_mvp_flow.py` - End-to-end integration tests
-- `tests/test_gateway.py` - API Gateway routing tests
-
-## 📝 Status
-
-✅ **MVP Complete**
-- [x] User Service (register, login)
-- [x] Product Catalog (listing, creation, seeded data)
-- [x] Shopping Cart (user-specific carts)
-- [x] Order Management (order creation)
-- [x] API Gateway (full request routing)
-- [x] Docker setup (all 7 services)
-- [x] Test suite
-
-📋 **Next Phases**
-- [ ] Payment Service (mock Stripe integration)
-- [ ] Notification Service (email queue)
-- [ ] Inter-service communication (inventory checks, order callbacks)
-- [ ] PostgreSQL database integration
-- [ ] JWT token authentication
-- [ ] Error handling & validation improvements
-- [ ] API documentation (OpenAPI/Swagger)
-- [ ] Load balancing & scaling configuration
-
-## 🐛 Troubleshooting
-
-### Services not accessible
+### Consul not showing services
 ```bash
-# Check all services are running
-docker compose ps
-
-# Check gateway logs
-docker compose logs api-gateway
-
-# Restart services
-docker compose restart
+# Check Consul UI at http://localhost:8500
+# All 7 services should be registered with green health checks
+docker compose logs consul
 ```
 
-### Port conflicts
-Modify ports in `docker-compose.yml` if default ports are in use.
+### PostgreSQL connection errors
+```bash
+docker compose logs postgres
+# Verify databases were created:
+docker exec ecom-postgres psql -U postgres -c "\l"
+```
 
-### Database persistence
-To add PostgreSQL, see the "Next Phases" section above.
+### Kubernetes — pods stuck in ImagePullBackOff
+```bash
+# Build images locally first (required before kubectl apply)
+docker build -t Bui-Tien-Dat-2808/user-service:latest -f Dockerfile .
+# ... repeat for each service (see k8s/ README)
+kubectl rollout restart deployment/<service-name>
+```
 
-## 📄 License
-MIT
+### Kubernetes — NodePort :30000 ECONNREFUSED on Windows
+Use port-forward instead:
+```bash
+kubectl port-forward service/api-gateway-service 9000:9000
+```
+Set Postman `base_url = http://localhost:9000` and test normally.
+
+---
+
+## ✅ Feature Checklist
+
+- [x] 7 microservices with FastAPI
+- [x] API Gateway with dynamic Consul-based routing
+- [x] PostgreSQL — database-per-service pattern (6 databases)
+- [x] Data persistence across container restarts
+- [x] Consul service discovery + health checks
+- [x] JWT authentication
+- [x] Prometheus metrics (`/metrics` on all services)
+- [x] Centralized logging (Loki + Promtail + Grafana)
+- [x] 77 automated tests (unit + integration)
+- [x] GitHub Actions CI/CD pipeline
+- [x] Kubernetes manifests (Deployments, Services, PVC, ConfigMap, Secrets)
+- [x] Postman collection for full E2E testing
+
+---
