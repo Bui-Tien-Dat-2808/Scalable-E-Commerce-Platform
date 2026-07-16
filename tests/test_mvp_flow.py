@@ -3,13 +3,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from services.user_service.app.main import app as user_app
+from services.user_service.app.main import app as user_app, UserModel
 from services.product_service.app.main import app as product_app, ProductModel
 from services.cart_service.app.main import app as cart_app
 from services.order_service.app.main import app as order_app
 from services.payment_service.app.main import app as payment_app
 from services.notification_service.app.main import app as notification_app
 from services.common.database import Base, engine, SessionLocal
+from services.common.security import hash_password
 
 
 client_user = TestClient(user_app)
@@ -24,7 +25,7 @@ client_notification = TestClient(notification_app)
 def setup_db():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
-    
+
     # Seed default products
     with SessionLocal() as db:
         db.add_all([
@@ -32,20 +33,39 @@ def setup_db():
             ProductModel(id=2, name="Smartphone", price=499.99, stock=20),
         ])
         db.commit()
-        
+
     yield
     Base.metadata.drop_all(bind=engine)
 
 
-def _auth_headers() -> dict:
-    email = "alice@example.com"
+def _auth_headers(email="alice@example.com", password="supersecret", username="alice") -> dict:
+    """Tạo headers với token của user thường."""
     client_user.post(
         "/auth/register",
-        json={"username": "alice", "email": email, "password": "supersecret"},
+        json={"username": username, "email": email, "password": password},
     )
     login_response = client_user.post(
         "/auth/login",
-        json={"email": email, "password": "supersecret"},
+        json={"email": email, "password": password},
+    )
+    return {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+
+def _admin_headers() -> dict:
+    """Tạo headers với token của admin (seed trực tiếp vào DB)."""
+    with SessionLocal() as db:
+        existing = db.query(UserModel).filter(UserModel.email == "admin@test.com").first()
+        if not existing:
+            db.add(UserModel(
+                username="admin",
+                email="admin@test.com",
+                password=hash_password("AdminPass123!"),
+                role="admin",
+            ))
+            db.commit()
+    login_response = client_user.post(
+        "/auth/login",
+        json={"email": "admin@test.com", "password": "AdminPass123!"},
     )
     return {"Authorization": f"Bearer {login_response.json()['access_token']}"}
 
@@ -66,27 +86,30 @@ def test_register_and_login_flow():
 
 
 def test_product_catalog_flow():
-    # Xoá database cho clean hoặc tạo sản phẩm thứ 3
+    admin_headers = _admin_headers()
+    # Tạo sản phẩm thứ 3 bằng admin
     create_response = client_product.post(
         "/products",
         json={"name": "Tablet", "price": 299.99, "stock": 15},
+        headers=admin_headers,
     )
     assert create_response.status_code == 201
 
     list_response = client_product.get("/products")
     assert list_response.status_code == 200
-    assert any(item["name"] == "Tablet" for item in list_response.json()["products"])
+    assert any(item["name"] == "Tablet" for item in list_response.json()["data"])
 
-    # Update sản phẩm ID=1 (Laptop Pro)
+    # Update sản phẩm ID=1 bằng admin
     update_response = client_product.put(
         "/products/1",
         json={"name": "Laptop Pro", "price": 1099.99, "stock": 8},
+        headers=admin_headers,
     )
     assert update_response.status_code == 200
     assert update_response.json()["name"] == "Laptop Pro"
 
-    # Soft delete sản phẩm ID=2 (Smartphone)
-    delete_response = client_product.delete("/products/2")
+    # Soft delete sản phẩm ID=2 bằng admin
+    delete_response = client_product.delete("/products/2", headers=admin_headers)
     assert delete_response.status_code == 200
     assert delete_response.json()["product"]["is_active"] is False
 
@@ -170,7 +193,7 @@ def test_order_flow_with_mocked_services():
 
     order_list = client_order.get("/orders", headers=headers)
     assert order_list.status_code == 200
-    assert len(order_list.json()["orders"]) >= 1
+    assert len(order_list.json()["data"]) >= 1
 
     order_detail = client_order.get(f"/orders/{order_data['id']}", headers=headers)
     assert order_detail.status_code == 200

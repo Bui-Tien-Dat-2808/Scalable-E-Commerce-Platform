@@ -2,7 +2,7 @@ import os
 from uuid import uuid4
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Column, Float, Integer, String
 from sqlalchemy.orm import Session
 
@@ -56,10 +56,10 @@ Base.metadata.create_all(bind=engine)
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class PaymentCreateRequest(BaseModel):
-    order_id: str
-    amount: float = 0.0
-    currency: str = "USD"
-    payment_method: str = "card"
+    order_id: str = Field(..., min_length=1, description="Order ID must not be empty")
+    amount: float = Field(0.0, ge=0.0, description="Amount must be non-negative")
+    currency: str = Field("USD", min_length=3, max_length=3, description="Currency must be a 3-letter code")
+    payment_method: str = Field("card", min_length=1, description="Payment method must not be empty")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

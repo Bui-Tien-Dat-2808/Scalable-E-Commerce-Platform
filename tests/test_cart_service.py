@@ -76,11 +76,11 @@ def test_update_nonexistent_item_returns_404():
     assert resp.status_code == 404
 
 
-def test_update_item_zero_quantity_returns_400():
+def test_update_item_zero_quantity_returns_422():
     headers = _get_auth_headers()
     client.post("/cart/items", json={"product_id": 1, "quantity": 2}, headers=headers)
     resp = client.put("/cart/items/1", json={"quantity": 0}, headers=headers)
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
 def test_delete_item_from_cart():
@@ -111,11 +111,11 @@ def test_add_to_cart_requires_auth():
 def test_carts_are_isolated_per_user():
     """Giỏ hàng của user A không ảnh hưởng đến user B."""
     # Đăng ký cả 2 user trong cùng một database context để có ID khác nhau
-    client_user.post("/auth/register", json={"username": "user_a", "email": "user_a@example.com", "password": "pass"})
-    client_user.post("/auth/register", json={"username": "user_b", "email": "user_b@example.com", "password": "pass"})
+    client_user.post("/auth/register", json={"username": "user_a", "email": "user_a@example.com", "password": "pass123"})
+    client_user.post("/auth/register", json={"username": "user_b", "email": "user_b@example.com", "password": "pass123"})
 
-    login_a = client_user.post("/auth/login", json={"email": "user_a@example.com", "password": "pass"})
-    login_b = client_user.post("/auth/login", json={"email": "user_b@example.com", "password": "pass"})
+    login_a = client_user.post("/auth/login", json={"email": "user_a@example.com", "password": "pass123"})
+    login_b = client_user.post("/auth/login", json={"email": "user_b@example.com", "password": "pass123"})
 
     headers_a = {"Authorization": f"Bearer {login_a.json()['access_token']}"}
     headers_b = {"Authorization": f"Bearer {login_b.json()['access_token']}"}
@@ -124,3 +124,24 @@ def test_carts_are_isolated_per_user():
 
     resp_b = client.get("/cart", headers=headers_b)
     assert resp_b.json()["items"] == []
+
+
+# ── Cart Validation Tests ─────────────────────────────────────────────────────
+
+def test_add_item_zero_quantity_returns_422():
+    headers = _get_auth_headers()
+    resp = client.post("/cart/items", json={"product_id": 1, "quantity": 0}, headers=headers)
+    assert resp.status_code == 422  # Unprocessable Entity
+
+
+def test_add_item_negative_quantity_returns_422():
+    headers = _get_auth_headers()
+    resp = client.post("/cart/items", json={"product_id": 1, "quantity": -5}, headers=headers)
+    assert resp.status_code == 422  # Unprocessable Entity
+
+
+def test_update_item_negative_quantity_returns_422():
+    headers = _get_auth_headers()
+    client.post("/cart/items", json={"product_id": 1, "quantity": 2}, headers=headers)
+    resp = client.put("/cart/items/1", json={"quantity": -1}, headers=headers)
+    assert resp.status_code == 422  # Unprocessable Entity

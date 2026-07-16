@@ -1,12 +1,14 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, Column, Float, Integer, String
 from sqlalchemy.orm import Session
+from typing import Optional
 
-from services.common.database import Base, engine, get_db
+from services.common.database import Base, engine, get_db, SessionLocal
 from services.common.consul import consul_client
+from services.common.security import require_admin
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
@@ -22,21 +24,16 @@ logger = setup_logger(SERVICE_NAME)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up product-service...")
-    # Seed data trước
-    from services.common.database import SessionLocal as _SL
-    with _SL() as _db:
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as _db:
         _seed_products(_db)
-        
-    # Startup: Đăng ký với Consul
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
     yield
     logger.info("Shutting down product-service...")
-    # Shutdown: Huỷ đăng ký khỏi Consul
     consul_client.deregister_service(INSTANCE_ID)
 
 
 app = FastAPI(title="Product Catalog Service", version="1.0.0", lifespan=lifespan)
-# Expose /metrics
 Instrumentator().instrument(app).expose(app)
 
 
@@ -65,25 +62,38 @@ def _seed_products(db: Session):
         db.commit()
 
 
-# Seed function is now called inside lifespan context manager
-
-
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class ProductCreateRequest(BaseModel):
-    name: str
-    price: float
-    stock: int
+    name: str = Field(..., min_length=1, max_length=255)
+    price: float = Field(..., gt=0)
+    stock: int = Field(..., ge=0)
 
 
 class ProductUpdateRequest(BaseModel):
-    name: str
-    price: float
-    stock: int
+    name: str = Field(..., min_length=1, max_length=255)
+    price: float = Field(..., gt=0)
+    stock: int = Field(..., ge=0)
 
 
 class StockDeductRequest(BaseModel):
-    quantity: int
+    quantity: int = Field(..., ge=1)
+
+
+class ProductResponse(BaseModel):
+    id: int
+    name: str
+    price: float
+    stock: int
+    is_active: bool
+
+
+class PaginatedProductResponse(BaseModel):
+    data: list[ProductResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -91,11 +101,15 @@ class StockDeductRequest(BaseModel):
 def _get_active_product(product_id: int, db: Session) -> ProductModel:
     product = db.query(ProductModel).filter(
         ProductModel.id == product_id,
-        ProductModel.is_active == True,
+        ProductModel.is_active == True,  # noqa: E712
     ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product
+
+
+def _to_response(p: ProductModel) -> ProductResponse:
+    return ProductResponse(id=p.id, name=p.name, price=p.price, stock=p.stock, is_active=p.is_active)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -110,47 +124,79 @@ def health_check():
     return {"service": "product-service", "status": "ok"}
 
 
-@app.post("/products", status_code=201)
-def create_product(payload: ProductCreateRequest, db: Session = Depends(get_db)):
+@app.get("/products", response_model=PaginatedProductResponse, tags=["Products"])
+def list_products(
+    page: int = Query(1, ge=1, description="Số trang (bắt đầu từ 1)"),
+    limit: int = Query(20, ge=1, le=100, description="Số item mỗi trang (tối đa 100)"),
+    name: Optional[str] = Query(None, description="Lọc theo tên (tìm kiếm gần đúng)"),
+    min_price: Optional[float] = Query(None, ge=0, description="Giá tối thiểu"),
+    max_price: Optional[float] = Query(None, ge=0, description="Giá tối đa"),
+    in_stock: Optional[bool] = Query(None, description="Chỉ hiện sản phẩm còn hàng"),
+    db: Session = Depends(get_db),
+):
+    query = db.query(ProductModel).filter(ProductModel.is_active == True)  # noqa: E712
+
+    if name:
+        query = query.filter(ProductModel.name.ilike(f"%{name}%"))
+    if min_price is not None:
+        query = query.filter(ProductModel.price >= min_price)
+    if max_price is not None:
+        query = query.filter(ProductModel.price <= max_price)
+    if in_stock is True:
+        query = query.filter(ProductModel.stock > 0)
+    elif in_stock is False:
+        query = query.filter(ProductModel.stock == 0)
+
+    total = query.count()
+    pages = max(1, -(-total // limit))  # ceiling division
+    products = query.offset((page - 1) * limit).limit(limit).all()
+
+    return PaginatedProductResponse(
+        data=[_to_response(p) for p in products],
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages,
+    )
+
+
+@app.get("/products/{product_id}", response_model=ProductResponse, tags=["Products"])
+def get_product(product_id: int, db: Session = Depends(get_db)):
+    return _to_response(_get_active_product(product_id, db))
+
+
+@app.post("/products", status_code=201, response_model=ProductResponse, tags=["Products"])
+def create_product(
+    payload: ProductCreateRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(require_admin),
+):
     product = ProductModel(**payload.model_dump())
     db.add(product)
     db.commit()
     db.refresh(product)
-    return {"id": product.id, "name": product.name, "price": product.price,
-            "stock": product.stock, "is_active": product.is_active}
+    return _to_response(product)
 
 
-@app.get("/products")
-def list_products(db: Session = Depends(get_db)):
-    products = db.query(ProductModel).filter(ProductModel.is_active == True).all()
-    return {"products": [
-        {"id": p.id, "name": p.name, "price": p.price, "stock": p.stock, "is_active": p.is_active}
-        for p in products
-    ]}
-
-
-@app.get("/products/{product_id}")
-def get_product(product_id: int, db: Session = Depends(get_db)):
-    product = _get_active_product(product_id, db)
-    return {"id": product.id, "name": product.name, "price": product.price,
-            "stock": product.stock, "is_active": product.is_active}
-
-
-@app.put("/products/{product_id}")
-def update_product(product_id: int, payload: ProductUpdateRequest, db: Session = Depends(get_db)):
+@app.put("/products/{product_id}", response_model=ProductResponse, tags=["Products"])
+def update_product(
+    product_id: int,
+    payload: ProductUpdateRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(require_admin),
+):
     product = _get_active_product(product_id, db)
     product.name = payload.name
     product.price = payload.price
     product.stock = payload.stock
     db.commit()
     db.refresh(product)
-    return {"id": product.id, "name": product.name, "price": product.price,
-            "stock": product.stock, "is_active": product.is_active}
+    return _to_response(product)
 
 
-@app.patch("/products/{product_id}/deduct-stock")
+@app.patch("/products/{product_id}/deduct-stock", tags=["Products"])
 def deduct_stock(product_id: int, payload: StockDeductRequest, db: Session = Depends(get_db)):
-    """Trừ tồn kho khi tạo order. Trả 409 nếu không đủ hàng."""
+    """Trừ tồn kho khi tạo order. Internal call — không yêu cầu admin."""
     product = _get_active_product(product_id, db)
     if product.stock < payload.quantity:
         raise HTTPException(
@@ -163,14 +209,16 @@ def deduct_stock(product_id: int, payload: StockDeductRequest, db: Session = Dep
     return {"product_id": product_id, "deducted": payload.quantity, "remaining_stock": product.stock}
 
 
-@app.delete("/products/{product_id}")
-def soft_delete_product(product_id: int, db: Session = Depends(get_db)):
+@app.delete("/products/{product_id}", tags=["Products"])
+def soft_delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(require_admin),
+):
     product = db.query(ProductModel).filter(ProductModel.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     product.is_active = False
     db.commit()
     db.refresh(product)
-    return {"message": "Product soft deleted", "product": {
-        "id": product.id, "name": product.name, "is_active": product.is_active
-    }}
+    return {"message": "Product soft deleted", "product": _to_response(product)}

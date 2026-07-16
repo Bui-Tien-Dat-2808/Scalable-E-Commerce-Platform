@@ -132,7 +132,7 @@ class TestFullOrderFlow:
         # Bước 4: Verify order trong order list
         list_resp = client_order.get("/orders", headers=headers)
         assert list_resp.status_code == 200
-        assert any(o["order_id"] == order["order_id"] for o in list_resp.json()["orders"])
+        assert any(o["order_id"] == order["order_id"] for o in list_resp.json()["data"])
 
     def test_order_payment_failed_status_reflects_failure(self):
         """If payment fail, order status = failed_payment."""
@@ -219,8 +219,8 @@ class TestFullOrderFlow:
         ):
             client_order.post("/orders", json={"items": [{"product_id": 1, "quantity": 1}]}, headers=headers_a)
 
-        orders_a = client_order.get("/orders", headers=headers_a).json()["orders"]
-        orders_b = client_order.get("/orders", headers=headers_b).json()["orders"]
+        orders_a = client_order.get("/orders", headers=headers_a).json()["data"]
+        orders_b = client_order.get("/orders", headers=headers_b).json()["data"]
 
         assert len(orders_a) == 1
         assert len(orders_b) == 0

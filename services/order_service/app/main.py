@@ -1,9 +1,10 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import Column, Float, Integer, String
 from sqlalchemy.orm import Session
 
@@ -71,14 +72,14 @@ Base.metadata.create_all(bind=engine)
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class OrderItem(BaseModel):
-    product_id: int
-    quantity: int
+    product_id: int = Field(..., gt=0, description="Product ID must be greater than zero")
+    quantity: int = Field(..., gt=0, description="Quantity must be greater than zero")
 
 
 class OrderCreateRequest(BaseModel):
-    items: list[OrderItem]
-    payment_method: str = "card"
-    currency: str = "USD"
+    items: list[OrderItem] = Field(..., min_length=1, description="Order must contain at least one item")
+    payment_method: str = Field("card", min_length=1)
+    currency: str = Field("USD", min_length=3, max_length=3)
     recipient_email: str | None = None
 
 
@@ -181,7 +182,8 @@ def create_order(
             # Rollback stock đã trừ (best-effort)
             for pid, qty in deducted:
                 try:
-                    httpx.patch(f"{PRODUCT_SERVICE_URL}/products/{pid}/deduct-stock",
+                    product_service_url = consul_client.resolve_service("product-service")
+                    httpx.patch(f"{product_service_url}/products/{pid}/deduct-stock",
                                 json={"quantity": -qty}, timeout=3.0)
                 except Exception:
                     pass
@@ -254,9 +256,26 @@ def create_order(
 
 
 @app.get("/orders")
-def list_orders(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    orders = db.query(OrderModel).filter(OrderModel.user_id == user_id).all()
-    return {"orders": [_order_to_dict(o, _get_items(o.id, db)) for o in orders]}
+def list_orders(
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Số trang (bắt đầu từ 1)"),
+    limit: int = Query(20, ge=1, le=100, description="Số item mỗi trang"),
+    status: Optional[str] = Query(None, description="Lọc theo trạng thái đơn hàng"),
+):
+    query = db.query(OrderModel).filter(OrderModel.user_id == user_id)
+    if status:
+        query = query.filter(OrderModel.status == status)
+    total = query.count()
+    pages = max(1, -(-total // limit))
+    orders = query.offset((page - 1) * limit).limit(limit).all()
+    return {
+        "data": [_order_to_dict(o, _get_items(o.id, db)) for o in orders],
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
 
 
 @app.get("/orders/{order_id}")

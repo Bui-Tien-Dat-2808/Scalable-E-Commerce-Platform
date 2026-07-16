@@ -1,7 +1,7 @@
 import os
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Column, Integer, String
 from sqlalchemy.orm import Session
 
@@ -53,12 +53,12 @@ Base.metadata.create_all(bind=engine)
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class CartItemRequest(BaseModel):
-    product_id: int
-    quantity: int
+    product_id: int = Field(..., gt=0, description="Product ID must be greater than zero")
+    quantity: int = Field(..., gt=0, description="Quantity must be greater than zero")
 
 
 class CartUpdateRequest(BaseModel):
-    quantity: int
+    quantity: int = Field(..., gt=0, description="Quantity must be greater than zero")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

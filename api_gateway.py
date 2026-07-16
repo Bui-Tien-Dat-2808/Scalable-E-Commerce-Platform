@@ -50,7 +50,11 @@ def build_target_path(service: str, path: str) -> str:
 
     # ── Có path: routing theo từng service ───────────────────────────────
     if service == "users":
-        return f"/{path}"
+        if path.startswith("auth"):
+            return f"/{path}"
+        if not path:
+            return "/users"
+        return f"/users/{path}"
     if service == "products":
         if path.startswith("products"):
             return f"/{path}"

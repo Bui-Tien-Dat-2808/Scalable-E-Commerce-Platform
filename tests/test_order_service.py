@@ -137,14 +137,14 @@ def test_create_order_insufficient_stock_returns_400():
     assert "stock" in resp.json()["detail"].lower()
 
 
-def test_create_order_empty_items_returns_400():
+def test_create_order_empty_items_returns_422():
     headers = _get_auth_headers()
     resp = client.post(
         "/orders",
         json={"items": [], "payment_method": "card"},
         headers=headers,
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
 def test_create_order_calculates_total_correctly():
@@ -168,7 +168,7 @@ def test_list_orders_returns_only_own_orders():
 
     resp = client.get("/orders", headers=headers)
     assert resp.status_code == 200
-    orders = resp.json()["orders"]
+    orders = resp.json()["data"]
     assert len(orders) >= 1
 
 
@@ -191,10 +191,10 @@ def test_get_order_not_found():
 
 def test_get_order_forbidden_for_other_user():
     # Register cả 2 user trong cùng users_db context để có ID khác nhau
-    client_user.post("/auth/register", json={"username": "ua", "email": "ua@test.com", "password": "pass"})
-    client_user.post("/auth/register", json={"username": "ub", "email": "ub@test.com", "password": "pass"})
-    login_a = client_user.post("/auth/login", json={"email": "ua@test.com", "password": "pass"})
-    login_b = client_user.post("/auth/login", json={"email": "ub@test.com", "password": "pass"})
+    client_user.post("/auth/register", json={"username": "ua", "email": "ua@test.com", "password": "pass123"})
+    client_user.post("/auth/register", json={"username": "ub", "email": "ub@test.com", "password": "pass123"})
+    login_a = client_user.post("/auth/login", json={"email": "ua@test.com", "password": "pass123"})
+    login_b = client_user.post("/auth/login", json={"email": "ub@test.com", "password": "pass123"})
     headers_a = {"Authorization": f"Bearer {login_a.json()['access_token']}"}
     headers_b = {"Authorization": f"Bearer {login_b.json()['access_token']}"}
 
