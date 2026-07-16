@@ -21,7 +21,7 @@ def _get_auth_headers(email: str = "order_user@example.com", username: str = "or
 
 
 def _mock_product(product_id: int = 1, name: str = "Laptop", price: float = 999.99, stock: int = 10):
-    """Helper: tạo mock response cho product service."""
+    """Helper: create mock response for product service."""
     return {"id": product_id, "name": name, "price": price, "stock": stock, "is_active": True}
 
 
@@ -41,10 +41,10 @@ def clear_state():
     Base.metadata.drop_all(bind=engine)
 
 
-# ─── Helper: patch tất cả HTTP calls trong order_service ─────────────────────
+# ─── Helper: patch all HTTP calls in order_service ─────────────────────
 
 def _patch_services(product_data=None, deduct_ok=True, payment_data=None):
-    """Context manager mock toàn bộ httpx calls trong order service."""
+    """Context manager to mock all httpx calls in order service."""
     product = product_data or _mock_product()
     payment = payment_data or _mock_payment_approved()
 
@@ -190,7 +190,7 @@ def test_get_order_not_found():
 
 
 def test_get_order_forbidden_for_other_user():
-    # Register cả 2 user trong cùng users_db context để có ID khác nhau
+    # Register both users in the same database context to get different IDs
     client_user.post("/auth/register", json={"username": "ua", "email": "ua@test.com", "password": "pass123"})
     client_user.post("/auth/register", json={"username": "ub", "email": "ub@test.com", "password": "pass123"})
     login_a = client_user.post("/auth/login", json={"email": "ua@test.com", "password": "pass123"})
@@ -202,7 +202,7 @@ def test_get_order_forbidden_for_other_user():
         create_resp = client.post("/orders", json={"items": [{"product_id": 1, "quantity": 1}]}, headers=headers_a)
     order_id = create_resp.json()["id"]
 
-    # User B cố lấy order của User A
+    # User B tries to retrieve User A's order
     resp = client.get(f"/orders/{order_id}", headers=headers_b)
     assert resp.status_code == 403
 

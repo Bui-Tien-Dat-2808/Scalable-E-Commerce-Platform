@@ -24,11 +24,11 @@ logger = setup_logger(SERVICE_NAME)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up cart-service...")
-    # Startup: Đăng ký với Consul
+    # Startup: Register with Consul
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
     yield
     logger.info("Shutting down cart-service...")
-    # Shutdown: Huỷ đăng ký khỏi Consul
+    # Shutdown: Deregister from Consul
     consul_client.deregister_service(INSTANCE_ID)
 
 
@@ -97,7 +97,7 @@ def health_check():
 
 @app.get("/cart", response_model=CartResponse, tags=["Cart"])
 def get_cart(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    """Xem giỏ hàng của người dùng hiện tại."""
+    """Retrieve the current user's shopping cart."""
     return _build_cart_response(user_id, db)
 
 
@@ -107,7 +107,7 @@ def add_to_cart(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Thêm sản phẩm vào giỏ hàng."""
+    """Add item to shopping cart."""
     existing = db.query(CartItemModel).filter(
         CartItemModel.user_id == user_id,
         CartItemModel.product_id == payload.product_id,
@@ -127,7 +127,7 @@ def update_cart_item(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Cập nhật số lượng của một sản phẩm trong giỏ hàng."""
+    """Update item quantity in shopping cart."""
     item = db.query(CartItemModel).filter(
         CartItemModel.user_id == user_id,
         CartItemModel.product_id == product_id,
@@ -145,7 +145,7 @@ def delete_cart_item(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Xóa sản phẩm khỏi giỏ hàng."""
+    """Remove item from shopping cart."""
     item = db.query(CartItemModel).filter(
         CartItemModel.user_id == user_id,
         CartItemModel.product_id == product_id,

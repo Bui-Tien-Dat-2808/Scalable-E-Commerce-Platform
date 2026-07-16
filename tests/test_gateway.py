@@ -1,8 +1,6 @@
 """Unit tests for API Gateway."""
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 import api_gateway

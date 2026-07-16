@@ -1,0 +1,1 @@
+[2026-07-16 15:29:54,840] INFO [product-service:34] - Connected to Redis successfully: redis://localhost:6379/0

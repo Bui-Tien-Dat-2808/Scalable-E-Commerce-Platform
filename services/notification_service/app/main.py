@@ -24,11 +24,11 @@ logger = setup_logger(SERVICE_NAME)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up notification-service...")
-    # Startup: Đăng ký với Consul
+    # Startup: Register with Consul
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
     yield
     logger.info("Shutting down notification-service...")
-    # Shutdown: Huỷ đăng ký khỏi Consul
+    # Shutdown: Deregister from Consul
     consul_client.deregister_service(INSTANCE_ID)
 
 
@@ -89,7 +89,7 @@ def health_check():
 
 @app.post("/notifications", response_model=NotificationResponse, tags=["Notifications"])
 def create_notification(payload: NotificationCreateRequest, db: Session = Depends(get_db)):
-    """Gửi thông báo (Email / SMS mock)."""
+    """Send mock notification (Email / SMS)."""
     notification_id = f"NTF-{uuid4().hex[:12].upper()}"
     status = "queued" if payload.recipient and payload.message else "failed"
     notification = NotificationModel(
@@ -109,7 +109,7 @@ def create_notification(payload: NotificationCreateRequest, db: Session = Depend
 
 @app.get("/notifications/{notification_id}", response_model=NotificationResponse, tags=["Notifications"])
 def get_notification(notification_id: str, db: Session = Depends(get_db)):
-    """Tra cứu trạng thái của một thông báo theo mã ID."""
+    """Retrieve a notification by its ID."""
     notification = db.query(NotificationModel).filter(NotificationModel.id == notification_id).first()
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")

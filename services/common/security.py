@@ -47,7 +47,7 @@ def verify_password(password: str, stored_password: str) -> bool:
 # ── JWT helpers ───────────────────────────────────────────────────────────────
 
 def create_access_token(payload: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
-    """Tạo access token JWT ngắn hạn (mặc định 60 phút)."""
+    """Create short-lived JWT access token (default 60 minutes)."""
     claims = payload.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
     claims.update({
@@ -60,8 +60,8 @@ def create_access_token(payload: dict, expires_minutes: int = ACCESS_TOKEN_EXPIR
 
 
 def create_refresh_token(payload: dict) -> str:
-    """Tạo refresh token JWT dài hạn (mặc định 7 ngày).
-    Chứa jti (JWT ID) duy nhất để tránh hash collision khi rotate.
+    """Create long-lived JWT refresh token (default 7 days).
+    Contains a unique jti (JWT ID) to avoid hash collisions on rotation.
     """
     claims = {"user_id": payload["user_id"]}
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -69,7 +69,7 @@ def create_refresh_token(payload: dict) -> str:
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "type": "refresh",
-        "jti": secrets.token_hex(16),  # unique ID — đảm bảo mỗi token khác nhau
+        "jti": secrets.token_hex(16),  # unique ID — guarantees uniqueness for each token
     })
     return jwt.encode(claims, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -95,14 +95,14 @@ def decode_refresh_token(token: str) -> dict:
 
 
 def hash_token(token: str) -> str:
-    """Hash refresh token trước khi lưu vào DB (tránh lưu raw token)."""
+    """Hash refresh token before saving to database (prevents storing raw tokens)."""
     return hashlib.sha256(token.encode()).hexdigest()
 
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
 
 def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> str:
-    """Dependency: trả về user_id từ access token. Tương thích ngược với code cũ."""
+    """Dependency: returns user_id from access token. Maintains backward compatibility."""
     payload = decode_access_token(credentials.credentials)
     user_id = payload.get("user_id")
     if user_id is None:
@@ -111,7 +111,7 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(bear
 
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> dict:
-    """Dependency: trả về {"user_id": str, "role": str} từ access token."""
+    """Dependency: returns {"user_id": str, "role": str} from access token."""
     payload = decode_access_token(credentials.credentials)
     user_id = payload.get("user_id")
     role = payload.get("role", "user")
@@ -121,7 +121,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """Dependency: chỉ cho phép user có role='admin'. Trả 403 nếu không đủ quyền."""
+    """Dependency: restricts access to admin role. Returns 403 if unauthorized."""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user

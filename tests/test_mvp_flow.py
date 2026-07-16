@@ -1,4 +1,4 @@
-"""MVP flow tests — kiểm tra từng service chạy đúng chức năng cơ bản."""
+"""MVP flow tests — verifies each service performs its basic functions correctly."""
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
@@ -39,7 +39,7 @@ def setup_db():
 
 
 def _auth_headers(email="alice@example.com", password="supersecret", username="alice") -> dict:
-    """Tạo headers với token của user thường."""
+    """Create headers with regular user token."""
     client_user.post(
         "/auth/register",
         json={"username": username, "email": email, "password": password},
@@ -52,7 +52,7 @@ def _auth_headers(email="alice@example.com", password="supersecret", username="a
 
 
 def _admin_headers() -> dict:
-    """Tạo headers với token của admin (seed trực tiếp vào DB)."""
+    """Create headers with admin token (seeded directly in DB)."""
     with SessionLocal() as db:
         existing = db.query(UserModel).filter(UserModel.email == "admin@test.com").first()
         if not existing:
@@ -87,7 +87,7 @@ def test_register_and_login_flow():
 
 def test_product_catalog_flow():
     admin_headers = _admin_headers()
-    # Tạo sản phẩm thứ 3 bằng admin
+    # Create a 3rd product as admin
     create_response = client_product.post(
         "/products",
         json={"name": "Tablet", "price": 299.99, "stock": 15},
@@ -99,7 +99,7 @@ def test_product_catalog_flow():
     assert list_response.status_code == 200
     assert any(item["name"] == "Tablet" for item in list_response.json()["data"])
 
-    # Update sản phẩm ID=1 bằng admin
+    # Update product ID=1 as admin
     update_response = client_product.put(
         "/products/1",
         json={"name": "Laptop Pro", "price": 1099.99, "stock": 8},
@@ -108,7 +108,7 @@ def test_product_catalog_flow():
     assert update_response.status_code == 200
     assert update_response.json()["name"] == "Laptop Pro"
 
-    # Soft delete sản phẩm ID=2 bằng admin
+    # Soft delete product ID=2 as admin
     delete_response = client_product.delete("/products/2", headers=admin_headers)
     assert delete_response.status_code == 200
     assert delete_response.json()["product"]["is_active"] is False
@@ -155,8 +155,8 @@ def test_cart_flow():
 
 def test_order_flow_with_mocked_services():
     """
-    Order flow với mock HTTP calls tới product/payment/notification services.
-    Order status phải là 'paid' sau khi payment approved.
+    Order flow with mock HTTP calls to product/payment/notification services.
+    Order status must be 'paid' after payment approved.
     """
     headers = _auth_headers()
 
@@ -218,7 +218,7 @@ def test_payment_and_notification_flow():
     assert payment_status.json()["transaction_id"] == transaction_id
     assert payment_status.json()["order_id"] == "ORD-MVP-001"
 
-    # Tra cứu payment theo order_id
+    # Find payment by order_id
     by_order = client_payment.get("/payments/by-order/ORD-MVP-001")
     assert by_order.status_code == 200
 

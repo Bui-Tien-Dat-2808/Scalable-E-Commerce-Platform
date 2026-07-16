@@ -109,8 +109,8 @@ def test_add_to_cart_requires_auth():
 
 
 def test_carts_are_isolated_per_user():
-    """Giỏ hàng của user A không ảnh hưởng đến user B."""
-    # Đăng ký cả 2 user trong cùng một database context để có ID khác nhau
+    """Cart of user A does not affect user B."""
+    # Register both users in the same database context to get different IDs
     client_user.post("/auth/register", json={"username": "user_a", "email": "user_a@example.com", "password": "pass123"})
     client_user.post("/auth/register", json={"username": "user_b", "email": "user_b@example.com", "password": "pass123"})
 

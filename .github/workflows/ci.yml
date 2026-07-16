@@ -23,11 +23,17 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install ruff coverage
         pip install -r requirements.txt
 
-    - name: Run Pytest
+    - name: Run Ruff Linter
+      run: |
+        ruff check .
+
+    - name: Run Pytest with Coverage
       env:
         # Sử dụng SQLite in-memory cho các test chạy nhanh & độc lập trên CI
         JWT_SECRET: test-secret-key-for-ci
       run: |
-        python -m pytest tests/ -v
+        coverage run -m pytest tests/ -v
+        coverage report --fail-under=60

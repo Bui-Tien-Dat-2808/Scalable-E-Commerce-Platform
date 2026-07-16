@@ -58,12 +58,32 @@ class RefreshTokenModel(Base):
     revoked = Column(Boolean, default=False, nullable=False)
 
 
-# ── Lifespan ──────────────────────────────────────────────────────────────────
+# ── Lifespan & Migrations ──────────────────────────────────────────────────────
+
+def run_migrations():
+    """Run Alembic database migrations programmatically."""
+    try:
+        import alembic.config
+        import alembic.command
+        logger.info("Running database migrations via Alembic...")
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ini_path = os.path.join(base_dir, "alembic.ini")
+        alembic_cfg = alembic.config.Config(ini_path)
+        alembic_cfg.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", "sqlite:///./user_service.db"))
+        alembic.command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations completed successfully")
+    except Exception as exc:
+        logger.error("Failed to run database migrations: %s", exc)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up user-service...")
-    Base.metadata.create_all(bind=engine)
+    if os.getenv("RUN_MIGRATIONS", "false").lower() == "true":
+        run_migrations()
+    else:
+        Base.metadata.create_all(bind=engine)
+    
     _seed_admin()
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
     yield
@@ -72,7 +92,7 @@ async def lifespan(app: FastAPI):
 
 
 def _seed_admin():
-    """Tạo tài khoản admin mặc định nếu chưa tồn tại."""
+    """Create default admin user if not exists."""
     with SessionLocal() as db:
         existing = db.query(UserModel).filter(UserModel.email == ADMIN_EMAIL).first()
         if not existing:
@@ -154,7 +174,7 @@ def register_user(payload: UserRegisterRequest, db: Session = Depends(get_db)):
         username=payload.username,
         email=str(payload.email),
         password=hash_password(payload.password),
-        role="user",  # public registration luôn là "user"
+        role="user",  # public registration is always "user"
     )
     db.add(user)
     db.commit()
@@ -172,7 +192,7 @@ def login_user(payload: UserLoginRequest, db: Session = Depends(get_db)):
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token({"user_id": str(user.id)})
 
-    # Lưu refresh token (hashed) vào DB — dùng naive UTC cho tương thích SQLite
+    # Save refresh token (hashed) to DB — use naive UTC for SQLite compatibility
     expires_at = datetime.utcnow() + timedelta(days=7)
     db.add(RefreshTokenModel(
         user_id=user.id,
@@ -193,11 +213,11 @@ def login_user(payload: UserLoginRequest, db: Session = Depends(get_db)):
 @app.post("/auth/refresh")
 def refresh_access_token(payload: RefreshRequest, db: Session = Depends(get_db)):
     """
-    Nhận refresh_token hợp lệ → trả access_token mới + rotate refresh_token mới.
-    Token cũ bị revoke ngay sau khi dùng.
+    Receive valid refresh_token -> return new access_token + rotate new refresh_token.
+    Old token is revoked immediately after use.
     """
     try:
-        claims = decode_refresh_token(payload.refresh_token)
+        decode_refresh_token(payload.refresh_token)
     except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
@@ -213,16 +233,16 @@ def refresh_access_token(payload: RefreshRequest, db: Session = Depends(get_db))
     if stored.expires_at < datetime.utcnow():
         raise HTTPException(status_code=401, detail="Refresh token expired")
 
-    # Lấy thông tin user để đưa role vào access token mới
+    # Fetch user info to include role in the new access token
     user = db.query(UserModel).filter(UserModel.id == stored.user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # Revoke token cũ
+    # Revoke old token
     stored.revoked = True
     db.commit()
 
-    # Cấp token mới (rotation)
+    # Issue new token (rotation)
     new_access_token = create_access_token({
         "user_id": str(user.id),
         "email": user.email,
@@ -248,7 +268,7 @@ def refresh_access_token(payload: RefreshRequest, db: Session = Depends(get_db))
 
 @app.post("/auth/logout")
 def logout(payload: RefreshRequest, db: Session = Depends(get_db)):
-    """Revoke refresh token — vô hiệu hoá session hiện tại."""
+    """Revoke refresh token — invalidates the current session."""
     token_hash = hash_token(payload.refresh_token)
     stored = db.query(RefreshTokenModel).filter(
         RefreshTokenModel.token_hash == token_hash,
@@ -265,14 +285,14 @@ def logout(payload: RefreshRequest, db: Session = Depends(get_db)):
 
 @app.get("/users", response_model=list[UserResponse], tags=["Users"])
 def list_users(db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
-    """Lấy danh sách tất cả người dùng (Chỉ Admin)."""
+    """List all users (Admin only)."""
     users = db.query(UserModel).all()
     return [UserResponse(id=u.id, username=u.username, email=u.email, role=u.role) for u in users]
 
 
 @app.get("/users/{user_id}", response_model=UserResponse, tags=["Users"])
 def get_user(user_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    """Lấy chi tiết thông tin người dùng (Admin hoặc chính chủ)."""
+    """Get user details (Admin or owner only)."""
     if current_user["role"] != "admin" and int(current_user["user_id"]) != user_id:
         raise HTTPException(status_code=403, detail="Forbidden: You cannot access other users' data")
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
@@ -288,7 +308,7 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Cập nhật thông tin người dùng (Admin hoặc chính chủ)."""
+    """Update user profile (Admin or owner only)."""
     if current_user["role"] != "admin" and int(current_user["user_id"]) != user_id:
         raise HTTPException(status_code=403, detail="Forbidden: You cannot modify other users' data")
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
@@ -311,7 +331,7 @@ def update_user(
 
 @app.delete("/users/{user_id}", tags=["Users"])
 def delete_user(user_id: int, db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
-    """Xóa người dùng (Chỉ Admin)."""
+    """Delete user (Admin only)."""
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

@@ -24,11 +24,11 @@ logger = setup_logger(SERVICE_NAME)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up payment-service...")
-    # Startup: Đăng ký với Consul
+    # Startup: Register with Consul
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
     yield
     logger.info("Shutting down payment-service...")
-    # Shutdown: Huỷ đăng ký khỏi Consul
+    # Shutdown: Deregister from Consul
     consul_client.deregister_service(INSTANCE_ID)
 
 
@@ -87,7 +87,7 @@ def health_check():
 
 @app.post("/payments/checkout", response_model=PaymentResponse, tags=["Payments"])
 def create_payment_session(payload: PaymentCreateRequest, db: Session = Depends(get_db)):
-    """Xử lý thanh toán cho đơn hàng (Stripe mock)."""
+    """Process payment for order (Stripe mock)."""
     transaction_id = f"TXN-{uuid4().hex[:12].upper()}"
     status = (
         "approved"
@@ -110,7 +110,7 @@ def create_payment_session(payload: PaymentCreateRequest, db: Session = Depends(
 
 @app.get("/payments/{transaction_id}", response_model=PaymentResponse, tags=["Payments"])
 def get_payment_status(transaction_id: str, db: Session = Depends(get_db)):
-    """Xem trạng thái giao dịch theo mã giao dịch (transaction_id)."""
+    """Get transaction status by transaction ID."""
     payment = db.query(PaymentModel).filter(PaymentModel.transaction_id == transaction_id).first()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
@@ -119,7 +119,7 @@ def get_payment_status(transaction_id: str, db: Session = Depends(get_db)):
 
 @app.get("/payments/by-order/{order_id}", response_model=PaymentResponse, tags=["Payments"])
 def get_payment_by_order(order_id: str, db: Session = Depends(get_db)):
-    """Xem trạng thái giao dịch theo mã đơn hàng (order_id)."""
+    """Get transaction status by order ID."""
     payment = db.query(PaymentModel).filter(PaymentModel.order_id == order_id).first()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found for this order")

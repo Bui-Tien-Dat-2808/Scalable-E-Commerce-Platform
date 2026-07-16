@@ -6,7 +6,7 @@ logger = logging.getLogger("consul_helper")
 
 CONSUL_URL = os.getenv("CONSUL_URL", "http://localhost:8500")
 
-# Static fallback map cho môi trường local/test khi không có Consul
+# Static fallback map for local/test environment when Consul is offline
 STATIC_FALLBACKS = {
     "user-service": os.getenv("USER_SERVICE_URL", "http://localhost:8000"),
     "product-service": os.getenv("PRODUCT_SERVICE_URL", "http://localhost:8001"),
@@ -22,9 +22,9 @@ class ConsulClient:
         self.consul_url = consul_url
 
     def register_service(self, name: str, service_id: str, host: str, port: int) -> bool:
-        """Đăng ký service với Consul + Setup Health Check."""
+        """Register service with Consul and setup Health Check."""
         url = f"{self.consul_url}/v1/agent/service/register"
-        # Health check endpoint của service
+        # Health check endpoint of the service
         check_url = f"http://{host}:{port}/health"
 
         payload = {
@@ -50,7 +50,7 @@ class ConsulClient:
         return False
 
     def deregister_service(self, service_id: str) -> bool:
-        """Gỡ đăng ký service khỏi Consul."""
+        """Deregister service from Consul."""
         url = f"{self.consul_url}/v1/agent/service/deregister/{service_id}"
         try:
             resp = httpx.put(url, timeout=5.0)
@@ -63,14 +63,14 @@ class ConsulClient:
         return False
 
     def resolve_service(self, name: str) -> str:
-        """Tìm kiếm URL của service khoẻ mạnh nhất. Fallback về static URL nếu lỗi/không thấy."""
+        """Resolve dynamic URL of the healthiest service instance. Fallback to static URL if error/not found."""
         url = f"{self.consul_url}/v1/health/service/{name}?passing=true"
         try:
             resp = httpx.get(url, timeout=3.0)
             if resp.status_code == 200:
                 instances = resp.json()
                 if instances:
-                    # Lấy instance đầu tiên (Client-side load balancing đơn giản)
+                    # Get the first instance (simple client-side load balancing)
                     service_data = instances[0]["Service"]
                     addr = service_data["Address"]
                     port = service_data["Port"]
@@ -80,7 +80,7 @@ class ConsulClient:
         except Exception as e:
             logger.warning(f"Consul query failed for {name} ({e}). Falling back to static route.")
 
-        # Cơ chế Fallback
+        # Fallback mechanism
         fallback_url = STATIC_FALLBACKS.get(name)
         if fallback_url:
             logger.info(f"Consul fallback: resolved {name} statically: {fallback_url}")
@@ -89,5 +89,5 @@ class ConsulClient:
         raise Exception(f"Unable to resolve service location for '{name}' (Consul query failed & no static fallback found).")
 
 
-# Client singleton dùng chung
+# Shared client singleton
 consul_client = ConsulClient()

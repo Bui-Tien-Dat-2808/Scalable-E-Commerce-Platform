@@ -1,10 +1,12 @@
 import os
+import json
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, Column, Float, Integer, String
 from sqlalchemy.orm import Session
 from typing import Optional
+import redis
 
 from services.common.database import Base, engine, get_db, SessionLocal
 from services.common.consul import consul_client
@@ -21,11 +23,75 @@ INSTANCE_ID = f"{SERVICE_NAME}-{os.getenv('HOSTNAME', 'default')}"
 
 logger = setup_logger(SERVICE_NAME)
 
+# ── Redis Connection ──────────────────────────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_client = None
+
+try:
+    # Set socket timeout to prevent blocking during unit tests or when Redis is offline
+    redis_client = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=2.0, decode_responses=True)
+    redis_client.ping()
+    logger.info("Connected to Redis successfully: %s", REDIS_URL)
+except Exception as exc:
+    logger.warning("Redis is not available, running without cache: %s", exc)
+    redis_client = None
+
+
+def _get_cache(key: str) -> Optional[str]:
+    if not redis_client:
+        return None
+    try:
+        return redis_client.get(key)
+    except Exception as exc:
+        logger.warning("Redis get error: %s", exc)
+        return None
+
+
+def _set_cache(key: str, value: str, ttl: int = 60) -> None:
+    if not redis_client:
+        return
+    try:
+        redis_client.setex(key, ttl, value)
+    except Exception as exc:
+        logger.warning("Redis set error: %s", exc)
+
+
+def _clear_cache(pattern: str = "products:*") -> None:
+    if not redis_client:
+        return
+    try:
+        keys = redis_client.keys(pattern)
+        if keys:
+            redis_client.delete(*keys)
+            logger.info("Cleared %d cache keys matching pattern '%s'", len(keys), pattern)
+    except Exception as exc:
+        logger.warning("Redis clear error: %s", exc)
+
+
+def run_migrations():
+    """Run Alembic database migrations programmatically."""
+    try:
+        import alembic.config
+        import alembic.command
+        logger.info("Running database migrations via Alembic...")
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ini_path = os.path.join(base_dir, "alembic.ini")
+        alembic_cfg = alembic.config.Config(ini_path)
+        alembic_cfg.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", "sqlite:///./product_service.db"))
+        alembic.command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations completed successfully")
+    except Exception as exc:
+        logger.error("Failed to run database migrations: %s", exc)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up product-service...")
-    Base.metadata.create_all(bind=engine)
+    if os.getenv("RUN_MIGRATIONS", "false").lower() == "true":
+        run_migrations()
+    else:
+        Base.metadata.create_all(bind=engine)
+        
     with SessionLocal() as _db:
         _seed_products(_db)
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
@@ -55,7 +121,7 @@ Base.metadata.create_all(bind=engine)
 
 
 def _seed_products(db: Session):
-    """Thêm sản phẩm mẫu nếu DB đang rỗng."""
+    """Seed sample products if DB is empty."""
     if db.query(ProductModel).count() == 0:
         db.add_all([
             ProductModel(name="Laptop", price=999.99, stock=10),
@@ -128,14 +194,25 @@ def health_check():
 
 @app.get("/products", response_model=PaginatedProductResponse, tags=["Products"])
 def list_products(
-    page: int = Query(1, ge=1, description="Số trang (bắt đầu từ 1)"),
-    limit: int = Query(20, ge=1, le=100, description="Số item mỗi trang (tối đa 100)"),
-    name: Optional[str] = Query(None, description="Lọc theo tên (tìm kiếm gần đúng)"),
-    min_price: Optional[float] = Query(None, ge=0, description="Giá tối thiểu"),
-    max_price: Optional[float] = Query(None, ge=0, description="Giá tối đa"),
-    in_stock: Optional[bool] = Query(None, description="Chỉ hiện sản phẩm còn hàng"),
+    page: int = Query(1, ge=1, description="Page number (starting from 1)"),
+    limit: int = Query(20, ge=1, le=100, description="Number of items per page (max 100)"),
+    name: Optional[str] = Query(None, description="Filter by name (partial search)"),
+    min_price: Optional[float] = Query(None, ge=0, description="Minimum price"),
+    max_price: Optional[float] = Query(None, ge=0, description="Maximum price"),
+    in_stock: Optional[bool] = Query(None, description="Show in stock products only"),
     db: Session = Depends(get_db),
 ):
+    """Get list of active products (with pagination, filtering, and Redis Cache)."""
+    cache_key = f"products:list:page={page}:limit={limit}:name={name}:min={min_price}:max={max_price}:stock={in_stock}"
+    cached_data = _get_cache(cache_key)
+    if cached_data:
+        try:
+            logger.info("Cache hit for products list: %s", cache_key)
+            return PaginatedProductResponse(**json.loads(cached_data))
+        except Exception as exc:
+            logger.warning("Failed to parse cached products: %s", exc)
+
+    logger.info("Cache miss for products list: %s", cache_key)
     query = db.query(ProductModel).filter(ProductModel.is_active == True)  # noqa: E712
 
     if name:
@@ -153,13 +230,18 @@ def list_products(
     pages = max(1, -(-total // limit))  # ceiling division
     products = query.offset((page - 1) * limit).limit(limit).all()
 
-    return PaginatedProductResponse(
+    response_data = PaginatedProductResponse(
         data=[_to_response(p) for p in products],
         total=total,
         page=page,
         limit=limit,
         pages=pages,
     )
+    
+    # Save to Redis
+    _set_cache(cache_key, json.dumps(response_data.model_dump()), ttl=60)
+    
+    return response_data
 
 
 @app.get("/products/{product_id}", response_model=ProductResponse, tags=["Products"])
@@ -177,6 +259,7 @@ def create_product(
     db.add(product)
     db.commit()
     db.refresh(product)
+    _clear_cache()
     return _to_response(product)
 
 
@@ -193,12 +276,13 @@ def update_product(
     product.stock = payload.stock
     db.commit()
     db.refresh(product)
+    _clear_cache()
     return _to_response(product)
 
 
 @app.patch("/products/{product_id}/deduct-stock", tags=["Products"])
 def deduct_stock(product_id: int, payload: StockDeductRequest, db: Session = Depends(get_db)):
-    """Trừ tồn kho khi tạo order. Internal call — không yêu cầu admin."""
+    """Deduct stock when creating order. Internal call — admin not required."""
     product = _get_active_product(product_id, db)
     if product.stock < payload.quantity:
         raise HTTPException(
@@ -208,6 +292,7 @@ def deduct_stock(product_id: int, payload: StockDeductRequest, db: Session = Dep
     product.stock -= payload.quantity
     db.commit()
     db.refresh(product)
+    _clear_cache()
     return {"product_id": product_id, "deducted": payload.quantity, "remaining_stock": product.stock}
 
 
@@ -223,4 +308,5 @@ def soft_delete_product(
     product.is_active = False
     db.commit()
     db.refresh(product)
+    _clear_cache()
     return {"message": "Product soft deleted", "product": _to_response(product)}

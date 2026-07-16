@@ -8,3 +8,5 @@ SQLAlchemy==2.0.31
 psycopg2-binary==2.9.9
 email-validator==2.1.1
 prometheus-fastapi-instrumentator==7.0.0
+redis==5.0.8
+alembic==1.13.2

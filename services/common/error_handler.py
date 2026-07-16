@@ -21,8 +21,8 @@ class StandardErrorEnvelope(BaseModel):
 
 def setup_error_handlers(app: FastAPI):
     """
-    Đăng ký global exception handlers để chuẩn hóa cấu trúc lỗi cho FastAPI app.
-    Cấu trúc trả về thống nhất: {"error": {"code": "...", "message": "...", "details": [...]}}
+    Registers global exception handlers to standardize error structures for the FastAPI application.
+    Unified output schema: {"error": {"code": "...", "message": "...", "details": [...]}}
     """
     
     @app.exception_handler(StarletteHTTPException)

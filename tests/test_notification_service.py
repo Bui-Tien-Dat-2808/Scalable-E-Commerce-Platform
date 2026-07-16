@@ -1,7 +1,6 @@
 """Unit tests for Notification Service."""
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 from services.notification_service.app.main import app, NotificationModel
 from services.common.database import Base, engine, get_db

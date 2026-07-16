@@ -1,4 +1,3 @@
-import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -27,11 +26,11 @@ logger = setup_logger(SERVICE_NAME)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up order-service...")
-    # Startup: Đăng ký với Consul
+    # Startup: Register with Consul
     consul_client.register_service(SERVICE_NAME, INSTANCE_ID, SERVICE_HOST, SERVICE_PORT)
     yield
     logger.info("Shutting down order-service...")
-    # Shutdown: Huỷ đăng ký khỏi Consul
+    # Shutdown: Deregister from Consul
     consul_client.deregister_service(INSTANCE_ID)
 
 
@@ -198,11 +197,11 @@ def create_order(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Tạo đơn hàng mới (Trừ tồn kho -> Thanh toán -> Gửi thông báo)."""
+    """Create a new order (Deduct stock -> Process payment -> Send notification)."""
     if not payload.items:
         raise HTTPException(status_code=400, detail="Order must contain at least one item")
 
-    # Bước 1: Lấy giá & trừ tồn kho
+    # Step 1: Fetch price & deduct stock
     items_detail = []
     total_amount = 0.0
     deducted: list[tuple[int, int]] = []
@@ -212,7 +211,7 @@ def create_order(
         try:
             _deduct_stock(item.product_id, item.quantity)
         except HTTPException as exc:
-            # Rollback stock đã trừ (best-effort)
+            # Rollback deducted stock (best-effort)
             for pid, qty in deducted:
                 try:
                     product_service_url = consul_client.resolve_service("product-service")
@@ -235,16 +234,16 @@ def create_order(
 
     total_amount = round(total_amount, 2)
 
-    # Bước 2: Tạo order trong DB
+    # Step 2: Create order in DB
     order = OrderModel(
-        order_ref="TEMP",  # sẽ update sau khi có id
+        order_ref="TEMP",  # will be updated after retrieving id
         user_id=user_id,
         status="pending_payment",
         total_amount=total_amount,
         currency=payload.currency,
     )
     db.add(order)
-    db.flush()  # lấy id trước commit
+    db.flush()  # get id before commit
 
     order.order_ref = f"ORD-{order.id}"
     for detail in items_detail:
@@ -259,7 +258,7 @@ def create_order(
     db.commit()
     db.refresh(order)
 
-    # Bước 3: Payment
+    # Step 3: Payment
     payment_result = _process_payment(
         order_id=order.order_ref,
         amount=total_amount,
@@ -274,7 +273,7 @@ def create_order(
     db.commit()
     db.refresh(order)
 
-    # Bước 4: Notification (fire-and-forget)
+    # Step 4: Notification (fire-and-forget)
     recipient = payload.recipient_email or f"user_{user_id}@example.com"
     if payment_approved:
         _send_notification(recipient, "order_paid",
@@ -292,11 +291,11 @@ def create_order(
 def list_orders(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
-    page: int = Query(1, ge=1, description="Số trang (bắt đầu từ 1)"),
-    limit: int = Query(20, ge=1, le=100, description="Số item mỗi trang"),
-    status: Optional[str] = Query(None, description="Lọc theo trạng thái đơn hàng"),
+    page: int = Query(1, ge=1, description="Page number (starting from 1)"),
+    limit: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    status: Optional[str] = Query(None, description="Filter by order status"),
 ):
-    """Xem danh sách đơn hàng của người dùng (Có phân trang và lọc)."""
+    """Get list of user's orders (with pagination and filtering)."""
     query = db.query(OrderModel).filter(OrderModel.user_id == user_id)
     if status:
         query = query.filter(OrderModel.status == status)
@@ -320,7 +319,7 @@ def list_orders(
 
 @app.get("/orders/{order_id}", response_model=OrderResponse, tags=["Orders"])
 def get_order(order_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    """Xem chi tiết một đơn hàng (Chính chủ)."""
+    """Get details of a specific order (owner only)."""
     order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -331,7 +330,7 @@ def get_order(order_id: int, user_id: str = Depends(get_current_user_id), db: Se
 
 @app.patch("/orders/{order_id}/cancel", response_model=OrderResponse, tags=["Orders"])
 def cancel_order(order_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    """Hủy một đơn hàng (Chính chủ)."""
+    """Cancel a specific order (owner only)."""
     order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")

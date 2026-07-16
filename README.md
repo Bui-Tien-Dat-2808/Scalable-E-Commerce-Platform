@@ -4,8 +4,8 @@ https://roadmap.sh/projects/scalable-ecommerce-platform
 
 # Scalable E-Commerce Platform
 
-A production-grade microservices e-commerce platform built with **FastAPI**, **Docker**, and **Kubernetes**.  
-Features service discovery, centralized logging, real-time metrics, persistent storage, automated CI/CD, and container orchestration.
+A production-grade microservices e-commerce platform built with **FastAPI**, **Docker**, **Kubernetes**, **Redis**, and **Consul**.  
+Features service discovery, database migrations, centralized caching, RBAC authorization, standardized error handling, centralized logging, real-time metrics, automated CI/CD, and container orchestration.
 
 ---
 
@@ -16,27 +16,27 @@ Client (Postman / Browser)
         │
         ▼
 ┌───────────────────┐
-│   API Gateway     │  :9000  ← single entry point, dynamic routing via Consul
+│   API Gateway     │  :9000  ← Single entry point, dynamic routing, Swagger docs proxy
 └───────┬───────────┘
-        │  discovers service addresses from Consul
+        │  Discovers service addresses from Consul
         ▼
 ┌───────────────────────────────────────────────────────────┐
 │                   Consul Service Registry  :8500           │
 └───────────────────────────────────────────────────────────┘
         │
-        ├── User Service          :8000  (users_db)
-        ├── Product Service       :8001  (products_db)
+        ├── User Service          :8000  (users_db)        ← JWT, Refresh Token Rotation
+        ├── Product Service       :8001  (products_db)     ← Caching via Redis
         ├── Cart Service          :8002  (carts_db)
         ├── Order Service         :8003  (orders_db)
         ├── Payment Service       :8004  (payments_db)
         └── Notification Service  :8005  (notifications_db)
                 │
-                ▼
-        PostgreSQL :5432  (6 separate databases on one instance)
+                ├── PostgreSQL :5432  (6 databases on one Postgres instance)
+                └── Redis      :6379  (Product catalog caching)
 
-Monitoring Stack:
+Monitoring & Logging:
   Prometheus  :9090  ← scrapes /metrics from all 7 services
-  Grafana     :3000  ← dashboards for metrics + logs
+  Grafana     :3000  ← dashboards for metrics + Loki logs
   Loki        :3100  ← log aggregation
   Promtail           ← tails ./logs/*.log → pushes to Loki
 ```
@@ -47,16 +47,17 @@ Monitoring Stack:
 
 | Layer | Technology |
 |---|---|
-| Framework | FastAPI 0.111.0 |
-| Runtime | Python 3.11-slim, Uvicorn 0.30.0 |
-| Database | PostgreSQL 16 (database-per-service) |
-| ORM | SQLAlchemy 2.x + psycopg2-binary |
-| Service Discovery | Consul 1.16 |
-| Monitoring | Prometheus + Grafana + Loki + Promtail |
-| Orchestration | Docker Compose / Kubernetes |
-| CI/CD | GitHub Actions (pytest on push/PR) |
-| Testing | Pytest 8.3.2 (77 test cases) |
-| Auth | JWT (python-jose) |
+| **Framework** | FastAPI 0.111.0 |
+| **Runtime** | Python 3.11-slim, Uvicorn 0.30.0 |
+| **Database** | PostgreSQL 16 (database-per-service pattern) |
+| **Cache** | Redis 7 (Alpine) |
+| **ORM & Migrations** | SQLAlchemy 2.x + Alembic (Database schema migrations) |
+| **Service Discovery** | Consul 1.16 |
+| **Security & Auth** | JWT (python-jose) + Refresh Token Rotation + RBAC (User/Admin) |
+| **Monitoring** | Prometheus + Grafana + Loki + Promtail |
+| **Orchestration** | Docker Compose / Kubernetes |
+| **CI/CD** | GitHub Actions (pytest on push/PR to main) |
+| **Testing** | Pytest 8.3.2 (**125 test cases** - 100% green) |
 
 ---
 
@@ -76,168 +77,106 @@ docker compose up --build -d
 ```bash
 docker compose ps
 ```
+Expected: all 14 containers (including `redis`) showing `Up` / `Up (healthy)`.
 
-Expected: all 13 containers showing `Up` / `Up (healthy)`.
-
-### 3. Test via API Gateway
-
+### 3. Access URLs
 ```
-API Gateway:          http://localhost:9000
-Consul UI:            http://localhost:8500
-Prometheus UI:        http://localhost:9090
-Grafana UI:           http://localhost:3000  (admin / admin)
+API Gateway (Entrypoint): http://localhost:9000
+Consul UI:               http://localhost:8500
+Prometheus UI:           http://localhost:9090
+Grafana UI:              http://localhost:3000  (admin / admin)
 ```
 
-### 4. Import Postman Collection
-
-Import `docs/ECommerce_Platform.postman_collection.json` into Postman.  
-Set Collection variable `base_url = http://localhost:9000` and run requests in order.
-
-### 5. Stop
+### 4. Stop
 
 ```bash
 docker compose down
 ```
 
-> Data is **persisted** in the `postgres_data` Docker volume — restarting does NOT lose data.
+> Data is **persisted** in the `postgres_data` Docker volume — restarting does not lose data.
 
 ---
 
-## ☸️ Kubernetes Deployment (Docker Desktop)
+## 📖 Swagger Documentation (API Specs)
 
-### Prerequisites
-- Docker Desktop with **Kubernetes enabled** (Settings → Kubernetes → Enable Kubernetes)
+Thanks to the Gateway dynamic routing, you can access the interactive Swagger UI of all individual microservices directly through the Gateway:
 
-### Deploy
+* **User Service Docs**: [http://localhost:9000/users/docs](http://localhost:9000/users/docs)
+* **Product Service Docs**: [http://localhost:9000/products/docs](http://localhost:9000/products/docs)
+* **Cart Service Docs**: [http://localhost:9000/cart/docs](http://localhost:9000/cart/docs)
+* **Order Service Docs**: [http://localhost:9000/orders/docs](http://localhost:9000/orders/docs)
+* **Payment Service Docs**: [http://localhost:9000/payments/docs](http://localhost:9000/payments/docs)
+* **Notification Service Docs**: [http://localhost:9000/notifications/docs](http://localhost:9000/notifications/docs)
 
+---
+
+## 🔒 Security & Authorization
+
+### 1. JWT & Refresh Token Rotation
+* **Login** returns both `access_token` (expires in 15 mins) and `refresh_token` (expires in 7 days).
+* The `refresh_token` is hashed (SHA-256) and stored in the database.
+* **Refresh Token Rotation**: Utilizing the token rotation mechanism, refreshing an access token invalidates the old refresh token and issues a new one. Single-use refresh tokens prevent replay attacks.
+* **Logout** blacklists/deletes the refresh token from the database.
+
+### 2. Role-Based Access Control (RBAC)
+User roles are classified as `user` or `admin`. 
+* **User Endpoint Rules**: Regular users can manage their own profiles, carts, orders, and view products.
+* **Admin Endpoint Rules**: Write operations in the Product Service (`POST /products`, `PUT /products/{id}`, `DELETE /products/{id}`) and listing/deleting users require the `admin` role.
+* Default Admin account seeded at startup:
+  * **Email**: `admin@example.com`
+  * **Password**: `Admin123!`
+
+---
+
+## ⚡ Performance Optimization (Redis Caching)
+
+* Endpoint `GET /products` is cached using Redis.
+* **Cache Key**: Generated dynamically based on query params (page, limit, name, price range, stock status).
+* **Cache Invalidation**: To ensure data consistency, the cache is automatically cleared when a product is created (`POST`), updated (`PUT`), deleted (`DELETE`), or when stock is deducted (`PATCH .../deduct-stock`).
+* **Fallback Mode**: If Redis is offline, the service gracefully falls back to querying PostgreSQL directly, preventing any downtime.
+
+---
+
+## 🗄️ Database Migrations (Alembic)
+
+Database schemas are managed using Alembic migrations in both `user-service` and `product-service` to enable zero-downtime database upgrades.
+
+To run migrations programmatically during startup, the services check the `RUN_MIGRATIONS=true` environment variable (configured in `docker-compose.yml`). If false (e.g., during tests), SQLAlchemy falls back to `create_all()`.
+
+Manual Alembic commands (run within the service folder):
 ```bash
-# Apply all manifests
-kubectl apply -f k8s/
+# Generate a new migration
+alembic revision --autogenerate -m "Add new column"
 
-# Watch pods come up
-kubectl get pods -w
-```
-
-### Access API Gateway on Kubernetes
-
-**Option A — Port Forward (reliable on Windows/WSL2):**
-```bash
-kubectl port-forward service/api-gateway-service 9000:9000
-```
-Then use `http://localhost:9000` in Postman as normal.
-
-**Option B — NodePort (may require cluster reset on Windows):**
-```
-http://localhost:30000
-```
-> If NodePort `:30000` returns `ECONNREFUSED`, use port-forward (Option A) instead.  
-> To fix NodePort: Docker Desktop → Settings → Kubernetes → **Reset Kubernetes Cluster** → `kubectl apply -f k8s/`
-
-### Kubernetes Architecture
-
-Each microservice Deployment uses the **Downward API** to inject Pod IP into Consul registration:
-```yaml
-env:
-  - name: SERVICE_HOST
-    valueFrom:
-      fieldRef:
-        fieldPath: status.podIP
-```
-This ensures Consul always has the correct Pod IP even when K8s reschedules pods.
-
-### Teardown
-
-```bash
-kubectl delete -f k8s/
+# Upgrade database to head
+alembic upgrade head
 ```
 
 ---
 
-## 📁 Project Structure
+## ❌ Global Standardized Errors
 
+All services return errors in a unified format, making client consumption cleaner:
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "Details of the error occurred",
+    "details": []
+  }
+}
 ```
-.
-├── api_gateway.py                  # API Gateway — dynamic routing via Consul
-├── docker-compose.yml              # Full stack: 7 services + Postgres + Consul + LGP
-├── Dockerfile                      # Single image for all Python services
-├── init-multiple-databases.sh      # Creates 6 PostgreSQL databases on startup
-├── requirements.txt                # Python dependencies
-├── README.md
-│
-├── services/
-│   ├── common/
-│   │   ├── consul.py               # Consul register/deregister + static fallback
-│   │   ├── database.py             # SQLAlchemy engine + session factory
-│   │   ├── logging.py              # Shared RotatingFileHandler logger
-│   │   └── security.py            # JWT encode/decode helpers
-│   ├── user_service/app/main.py
-│   ├── product_service/app/main.py
-│   ├── cart_service/app/main.py
-│   ├── order_service/app/main.py
-│   ├── payment_service/app/main.py
-│   └── notification_service/app/main.py
-│
-├── tests/                          # 77 test cases — run independently (SQLite in-memory)
-│   ├── test_user_service.py
-│   ├── test_product_service.py     # (via test_mvp_flow.py)
-│   ├── test_cart_service.py
-│   ├── test_order_service.py
-│   ├── test_payment_service.py
-│   ├── test_notification_service.py
-│   ├── test_gateway.py
-│   ├── test_mvp_flow.py
-│   └── test_integration_flow.py
-│
-├── k8s/                            # Kubernetes manifests
-│   ├── configmap.yaml
-│   ├── secrets.yaml
-│   ├── postgres.yaml               # Deployment + PVC + Service
-│   ├── db-init-configmap.yaml      # Init script for 6 databases
-│   ├── consul.yaml
-│   ├── api-gateway.yaml            # NodePort :30000
-│   ├── user-service.yaml
-│   ├── product-service.yaml
-│   ├── cart-service.yaml
-│   ├── order-service.yaml
-│   ├── payment-service.yaml
-│   └── notification-service.yaml
-│
-├── monitoring/
-│   ├── prometheus.yml              # Scrape config for all 7 /metrics endpoints
-│   ├── promtail-config.yml         # Tail ./logs/*.log → push to Loki
-│   └── grafana/
-│       └── provisioning/
-│           └── datasources/
-│               └── datasources.yml # Auto-provision Prometheus + Loki data sources
-│
-├── docs/
-│   ├── QUICK_START.md
-│   ├── MVP_COMPLETE.md
-│   └── ECommerce_Platform.postman_collection.json
-│
-├── scripts/
-│   ├── test_e2e.ps1
-│   ├── test_mvp_e2e.ps1
-│   └── validate_mvp.ps1
-│
-├── logs/                           # Runtime logs (gitignored except .gitkeep)
-│   └── .gitkeep
-│
-└── .github/
-    └── workflows/
-        └── ci.yml                  # GitHub Actions: pytest on push/PR to main
-```
+Validation errors (HTTP 422) are captured globally and mapped to this schema, detailing exact field problems.
 
 ---
 
 ## 🔌 API Reference
 
-All requests go through the API Gateway at `http://localhost:9000`.  
-Auth-required endpoints need header: `Authorization: Bearer <token>`
+All requests go through the API Gateway at `http://localhost:9000`.
 
 ### Health Checks
 ```
-GET  /health                        → Gateway status
+GET  /health                        → Gateway health
 GET  /users/health                  → User Service
 GET  /products/health               → Product Service
 GET  /cart/health                   → Cart Service
@@ -248,150 +187,87 @@ GET  /notifications/health          → Notification Service
 
 ### User Service
 ```
-POST /users/auth/register           → Register new user
-POST /users/auth/login              → Login, returns JWT access_token
+POST   /users/auth/register         → Register new user
+POST   /users/auth/login            → Login (returns access + refresh tokens)
+POST   /users/auth/refresh          → Rotate refresh token to get a new access token
+POST   /users/auth/logout           → Revoke refresh token
+GET    /users                       * Admin only * List users (paginated)
+GET    /users/{id}                  → View profile (self or admin)
+PUT    /users/{id}                  → Update user profile (self or admin)
+DELETE /users/{id}                  * Admin only * Delete user
 ```
 
 ### Product Service
 ```
-GET  /products                      → List all products
-GET  /products/{id}                 → Get product by ID
-POST /products                      → Create product
-PUT  /products/{id}/deduct-stock    → Deduct inventory (called by Order Service)
+GET    /products                    → List all active products (paginated, filtered, cached)
+GET    /products/{id}               → Get product details by ID
+POST   /products                    * Admin only * Create product
+PUT    /products/{id}               * Admin only * Update product details
+DELETE /products/{id}               * Admin only * Soft delete product
 ```
 
-### Shopping Cart  *(auth required)*
+### Shopping Cart (Auth Required)
 ```
-GET    /cart                        → View current user's cart
-POST   /cart/items                  → Add item { product_id, quantity }
-PUT    /cart/items/{product_id}     → Update quantity
-DELETE /cart/items/{product_id}     → Remove item
+GET    /cart                        → View current user's cart items
+POST   /cart/items                  → Add item to cart { product_id, quantity }
+PUT    /cart/items/{product_id}     → Update item quantity (positive values only)
+DELETE /cart/items/{product_id}     → Remove item from cart
 ```
 
-### Order Service  *(auth required)*
+### Order Service (Auth Required)
 ```
-POST   /orders                      → Create order { items: [{product_id, quantity}] }
-GET    /orders                      → List current user's orders
+POST   /orders                      → Checkout cart & create order
+GET    /orders                      → List current user's orders (paginated)
 GET    /orders/{id}                 → Order detail
-PATCH  /orders/{id}/cancel          → Cancel order
+PATCH  /orders/{id}/cancel          → Cancel order (restores product inventory)
 ```
 
 ### Payment Service
 ```
 POST   /payments/checkout           → Process payment { order_id, amount, payment_method }
-GET    /payments/{transaction_id}   → Get by transaction ID
-GET    /payments/order/{order_id}   → Get by order ID
+GET    /payments/{transaction_id}   → Get payment by transaction ID
+GET    /payments/order/{order_id}   → Get payment by order ID
 ```
 
 ### Notification Service
 ```
-POST   /notifications               → Create notification { user_id, message, event_type }
-GET    /notifications/{id}          → Get notification by ID
-```
-
-### Metrics (Prometheus)
-```
-GET  /metrics                       → Available on each service's direct port (8000-8005, 9000)
+POST   /notifications               → Send custom notification
+GET    /notifications/{id}          → View notification details
 ```
 
 ---
 
 ## 🧪 Testing
 
-Tests run **independently** of Docker — they use SQLite in-memory and mock all external calls.
+Tests run independently using SQLite in-memory databases and mocking external network dependencies.
 
+### Running tests locally:
 ```bash
-# Setup
+# Setup virtual environment
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-# Run all 77 tests
-pytest tests/ -v
-
-# Run specific module
-pytest tests/test_order_service.py -v
-
-# Run with short traceback
-pytest tests/ --tb=short
+# Run all 125 test cases via virtualenv
+.venv\Scripts\python -m pytest tests/ -v --tb=short
 ```
-
-### CI/CD
-
-Every push and PR to `main` automatically triggers the full test suite on GitHub Actions.  
-See: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
 ---
 
-## 📊 Monitoring & Logging
+## ✅ Final Feature Checklist
 
-### Grafana Dashboards (`http://localhost:3000`)
-- **Data Source: Prometheus** — total request count, request rate per service
-- **Data Source: Loki** — centralized logs from all 7 services
-
-### Prometheus (`http://localhost:9090`)
-- Query: `http_requests_total` — total requests per service
-- Query: `rate(http_requests_total[1m])` — real-time request rate
-
-### Log Files
-Each service writes rotating logs to `./logs/<service-name>.log`.  
-Promtail tails these files and ships them to Loki for querying in Grafana Explore.
-
----
-
-## 🔎 Troubleshooting
-
-### Services not responding
-```bash
-docker compose ps            # Check all containers are Up
-docker compose logs api-gateway --tail=50
-docker compose restart <service-name>
-```
-
-### Consul not showing services
-```bash
-# Check Consul UI at http://localhost:8500
-# All 7 services should be registered with green health checks
-docker compose logs consul
-```
-
-### PostgreSQL connection errors
-```bash
-docker compose logs postgres
-# Verify databases were created:
-docker exec ecom-postgres psql -U postgres -c "\l"
-```
-
-### Kubernetes — pods stuck in ImagePullBackOff
-```bash
-# Build images locally first (required before kubectl apply)
-docker build -t Bui-Tien-Dat-2808/user-service:latest -f Dockerfile .
-# ... repeat for each service (see k8s/ README)
-kubectl rollout restart deployment/<service-name>
-```
-
-### Kubernetes — NodePort :30000 ECONNREFUSED on Windows
-Use port-forward instead:
-```bash
-kubectl port-forward service/api-gateway-service 9000:9000
-```
-Set Postman `base_url = http://localhost:9000` and test normally.
-
----
-
-## ✅ Feature Checklist
-
-- [x] 7 microservices with FastAPI
-- [x] API Gateway with dynamic Consul-based routing
-- [x] PostgreSQL — database-per-service pattern (6 databases)
-- [x] Data persistence across container restarts
-- [x] Consul service discovery + health checks
-- [x] JWT authentication
-- [x] Prometheus metrics (`/metrics` on all services)
-- [x] Centralized logging (Loki + Promtail + Grafana)
-- [x] 77 automated tests (unit + integration)
-- [x] GitHub Actions CI/CD pipeline
-- [x] Kubernetes manifests (Deployments, Services, PVC, ConfigMap, Secrets)
-- [x] Postman collection for full E2E testing
-
----
+- [x] **7 microservices** with FastAPI
+- [x] **API Gateway** with dynamic Consul-based routing
+- [x] **PostgreSQL** — database-per-service pattern (6 databases)
+- [x] **Redis Caching** for Product Service catalog
+- [x] **Alembic Migrations** for database schema management
+- [x] **JWT Token Rotation** & Blacklisting
+- [x] **Role-Based Access Control (RBAC)** (User / Admin)
+- [x] **Pagination & Filtering** on endpoints
+- [x] **Standardized Error Handling** (unified JSON payloads)
+- [x] **Swagger UI integration** for all services via Gateway routing
+- [x] **Prometheus metrics** (`/metrics` on all services)
+- [x] **Centralized Logging & Monitoring** (Loki + Promtail + Grafana)
+- [x] **125 automated tests** (100% passing)
+- [x] **Kubernetes manifests** (Deployments, Services, PVC, ConfigMap, Secrets)
+- [x] **Postman collection** for easy API testing (`docs/`)

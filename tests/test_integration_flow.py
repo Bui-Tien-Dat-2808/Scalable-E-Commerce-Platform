@@ -1,7 +1,7 @@
 """
 Integration test: Full business flow
-Order → Payment → Notification (in-process, các service dùng TestClient)
-HTTP calls giữa các service được mock để simulate inter-service communication.
+Order → Payment → Notification (in-process, services use TestClient)
+HTTP calls between services are mocked to simulate inter-service communication.
 """
 import pytest
 from unittest.mock import patch, MagicMock
@@ -29,7 +29,7 @@ def reset_all():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     
-    # Seed products cho integration test
+    # Seed products for integration test
     with SessionLocal() as db:
         db.add_all([
             ProductModel(id=1, name="Laptop", price=999.99, stock=10),
@@ -88,21 +88,21 @@ def _make_notification_response():
 class TestFullOrderFlow:
     def test_user_registers_adds_to_cart_places_order_gets_paid(self):
         """
-        Luồng đầy đủ:
-        1. User đăng ký & đăng nhập
-        2. Thêm sản phẩm vào giỏ hàng
-        3. Tạo order → payment approved → status = paid
-        4. Notification được gửi
+        Full flow:
+        1. User registers & logs in
+        2. Add item to cart
+        3. Create order → payment approved → status = paid
+        4. Notification is sent
         """
         headers = _register_and_login("alice@test.com", "alice")
 
-        # Bước 2: Thêm vào giỏ
+        # Step 2: Add to cart
         cart_resp = client_cart.post("/cart/items", json={"product_id": 1, "quantity": 2}, headers=headers)
         assert cart_resp.status_code == 200
         cart = cart_resp.json()
         assert any(i["product_id"] == 1 for i in cart["items"])
 
-        # Bước 3: Tạo order (mock inter-service HTTP)
+        # Step 3: Create order (mock inter-service HTTP)
         with patch.multiple(
             "services.order_service.app.main.httpx",
             get=lambda url, **kw: _make_product_response(1, "Laptop", 999.99, 10),
@@ -129,7 +129,7 @@ class TestFullOrderFlow:
         assert order["transaction_id"] == "TXN-INTTEST01"
         assert order["total_amount"] == pytest.approx(1999.98, abs=0.01)
 
-        # Bước 4: Verify order trong order list
+        # Step 4: Verify order in order list
         list_resp = client_order.get("/orders", headers=headers)
         assert list_resp.status_code == 200
         assert any(o["order_id"] == order["order_id"] for o in list_resp.json()["data"])
@@ -159,7 +159,7 @@ class TestFullOrderFlow:
         assert resp.json()["payment_status"] == "failed"
 
     def test_order_insufficient_stock_rejected(self):
-        """Order bị từ chối nếu stock không đủ."""
+        """Order is rejected if stock is insufficient."""
         headers = _register_and_login("carol@test.com", "carol")
 
         with patch.multiple(
@@ -178,7 +178,7 @@ class TestFullOrderFlow:
         assert "stock" in resp.json()["error"]["message"].lower()
 
     def test_cancel_order_changes_status(self):
-        """User có thể cancel order, status = cancelled."""
+        """User can cancel order, status = cancelled."""
         headers = _register_and_login("dave@test.com", "dave")
 
         with patch.multiple(
@@ -205,7 +205,7 @@ class TestFullOrderFlow:
         assert cancel_resp.json()["status"] == "cancelled"
 
     def test_two_users_orders_are_isolated(self):
-        """Hai user không thấy order của nhau."""
+        """Two users cannot see each other's orders."""
         headers_a = _register_and_login("alice2@test.com", "alice2")
         headers_b = _register_and_login("bob2@test.com", "bob2")
 

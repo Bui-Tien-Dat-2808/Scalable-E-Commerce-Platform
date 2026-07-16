@@ -1,8 +1,8 @@
 """
 Shared database module.
-Tạo SQLAlchemy engine từ DATABASE_URL env var.
-Mặc định dùng SQLite (phù hợp cho dev/test).
-Khi chạy Docker dùng PostgreSQL qua DATABASE_URL.
+Creates SQLAlchemy engine from DATABASE_URL env var.
+Defaults to SQLite (suitable for dev/test).
+When running in Docker, PostgreSQL is used via DATABASE_URL.
 """
 import os
 
@@ -11,7 +11,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
 
-# SQLite cần check_same_thread=False; PostgreSQL không cần
+# SQLite requires check_same_thread=False; PostgreSQL does not
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
@@ -24,7 +24,7 @@ class Base(DeclarativeBase):
 
 
 def get_db():
-    """FastAPI dependency: tạo DB session cho mỗi request, đóng khi xong."""
+    """FastAPI dependency: creates a DB session for each request, closes it when done."""
     db = SessionLocal()
     try:
         yield db

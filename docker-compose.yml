@@ -13,6 +13,17 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: ecom-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   postgres:
     image: postgres:16-alpine
     container_name: ecom-postgres
@@ -42,6 +53,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/users_db
       - CONSUL_URL=http://consul:8500
+      - RUN_MIGRATIONS=true
       - SERVICE_NAME=user-service
       - SERVICE_HOST=user-service
       - SERVICE_PORT=8000
@@ -64,6 +76,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/products_db
       - CONSUL_URL=http://consul:8500
+      - REDIS_URL=redis://redis:6379/0
+      - RUN_MIGRATIONS=true
       - SERVICE_NAME=product-service
       - SERVICE_HOST=product-service
       - SERVICE_PORT=8001
@@ -73,6 +87,8 @@ services:
       postgres:
         condition: service_healthy
       consul:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   cart-service:

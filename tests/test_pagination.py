@@ -1,15 +1,14 @@
 """
-Pagination & Filtering Tests — kiểm tra GET /products và GET /orders.
+Pagination & Filtering Tests — tests for GET /products and GET /orders.
 """
 from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from services.user_service.app.main import app as user_app, UserModel
+from services.user_service.app.main import app as user_app
 from services.product_service.app.main import app as product_app, ProductModel
 from services.order_service.app.main import app as order_app
 from services.common.database import Base, engine, SessionLocal
-from services.common.security import hash_password
 
 client_user = TestClient(user_app)
 client_product = TestClient(product_app)
@@ -21,12 +20,12 @@ def setup_db():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
-    # Seed 5 sản phẩm với giá và tên khác nhau
+    # Seed 5 products with different names and prices
     with SessionLocal() as db:
         db.add_all([
             ProductModel(name="Laptop", price=999.99, stock=10),
             ProductModel(name="Smartphone", price=499.99, stock=20),
-            ProductModel(name="Tablet", price=299.99, stock=0),   # hết hàng
+            ProductModel(name="Tablet", price=299.99, stock=0),   # out of stock
             ProductModel(name="Monitor", price=350.00, stock=5),
             ProductModel(name="Keyboard", price=79.99, stock=15),
         ])
@@ -51,7 +50,7 @@ def _auth_headers() -> dict:
 # ── GET /products — Pagination ────────────────────────────────────────────────
 
 def test_products_pagination_default():
-    """Mặc định: page=1, limit=20 — trả về tất cả 5 sản phẩm."""
+    """Default: page=1, limit=20 — returns all 5 products."""
     resp = client_product.get("/products")
     assert resp.status_code == 200
     body = resp.json()
@@ -66,7 +65,7 @@ def test_products_pagination_default():
 
 
 def test_products_pagination_limit_1():
-    """Giới hạn 1 item mỗi trang — trả về 1 sản phẩm, pages=5."""
+    """Limit to 1 item per page — returns 1 product, pages=5."""
     resp = client_product.get("/products?page=1&limit=1")
     assert resp.status_code == 200
     body = resp.json()
@@ -76,7 +75,7 @@ def test_products_pagination_limit_1():
 
 
 def test_products_pagination_page_2():
-    """Trang 2 với limit=2 — trả về 2 sản phẩm (item 3-4)."""
+    """Page 2 with limit=2 — returns 2 products (items 3-4)."""
     resp = client_product.get("/products?page=2&limit=2")
     assert resp.status_code == 200
     body = resp.json()
@@ -85,7 +84,7 @@ def test_products_pagination_page_2():
 
 
 def test_products_pagination_out_of_range():
-    """Trang vượt quá dữ liệu — trả về data rỗng, total vẫn đúng."""
+    """Page out of range — returns empty data, total is still correct."""
     resp = client_product.get("/products?page=99&limit=20")
     assert resp.status_code == 200
     body = resp.json()
@@ -96,7 +95,7 @@ def test_products_pagination_out_of_range():
 # ── GET /products — Filtering ─────────────────────────────────────────────────
 
 def test_products_filter_by_name_exact():
-    """Lọc theo tên 'Laptop' — trả về đúng 1 sản phẩm."""
+    """Filter by name 'Laptop' — returns exactly 1 product."""
     resp = client_product.get("/products?name=Laptop")
     assert resp.status_code == 200
     body = resp.json()
@@ -105,7 +104,7 @@ def test_products_filter_by_name_exact():
 
 
 def test_products_filter_by_name_partial():
-    """Lọc tên gần đúng 'top' — match 'Laptop'."""
+    """Filter by partial name 'top' — matches 'Laptop'."""
     resp = client_product.get("/products?name=top")
     assert resp.status_code == 200
     assert resp.json()["total"] >= 1
@@ -113,21 +112,21 @@ def test_products_filter_by_name_partial():
 
 
 def test_products_filter_by_min_price():
-    """Lọc price >= 500 — chỉ Laptop (999.99) và Smartphone (499.99→ không pass vì <500)."""
+    """Filter by price >= 500 — only matches Laptop (999.99)."""
     resp = client_product.get("/products?min_price=500")
     assert resp.status_code == 200
     assert all(p["price"] >= 500 for p in resp.json()["data"])
 
 
 def test_products_filter_by_max_price():
-    """Lọc price <= 100 — chỉ Keyboard (79.99)."""
+    """Filter by price <= 100 — only matches Keyboard (79.99)."""
     resp = client_product.get("/products?max_price=100")
     assert resp.status_code == 200
     assert all(p["price"] <= 100 for p in resp.json()["data"])
 
 
 def test_products_filter_by_price_range():
-    """Lọc 300 <= price <= 500 — Smartphone (499.99), Tablet (299.99→ không pass), Monitor (350)."""
+    """Filter by 300 <= price <= 500 — matches Smartphone (499.99) and Monitor (350)."""
     resp = client_product.get("/products?min_price=300&max_price=500")
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -135,7 +134,7 @@ def test_products_filter_by_price_range():
 
 
 def test_products_filter_in_stock_true():
-    """in_stock=true — không trả về Tablet (stock=0)."""
+    """in_stock=true — does not return out-of-stock Tablet."""
     resp = client_product.get("/products?in_stock=true")
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -144,7 +143,7 @@ def test_products_filter_in_stock_true():
 
 
 def test_products_filter_in_stock_false():
-    """in_stock=false — chỉ trả về Tablet (stock=0)."""
+    """in_stock=false — only returns out-of-stock Tablet."""
     resp = client_product.get("/products?in_stock=false")
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -153,7 +152,7 @@ def test_products_filter_in_stock_false():
 
 
 def test_products_combine_filters():
-    """Kết hợp name + min_price — phải trả về đúng kết quả intersection."""
+    """Combine name + min_price — returns correct intersection."""
     resp = client_product.get("/products?name=Monitor&min_price=300")
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -164,7 +163,7 @@ def test_products_combine_filters():
 # ── GET /orders — Pagination + Filtering ──────────────────────────────────────
 
 def test_orders_pagination_empty():
-    """User mới chưa có order — trả về total=0, data=[]."""
+    """New user with no orders — returns total=0, data=[]."""
     headers = _auth_headers()
     resp = client_order.get("/orders", headers=headers)
     assert resp.status_code == 200
@@ -175,7 +174,7 @@ def test_orders_pagination_empty():
 
 
 def test_orders_pagination_structure():
-    """Kiểm tra cấu trúc response có đủ fields pagination."""
+    """Verify response structure contains all pagination fields."""
     headers = _auth_headers()
     resp = client_order.get("/orders?page=1&limit=10", headers=headers)
     assert resp.status_code == 200
@@ -189,7 +188,7 @@ def test_orders_pagination_structure():
 
 
 def test_orders_filter_by_status_no_match():
-    """Lọc theo status='paid' khi chưa có order nào — trả về rỗng."""
+    """Filter by status='paid' when no orders exist — returns empty list."""
     headers = _auth_headers()
     resp = client_order.get("/orders?status=paid", headers=headers)
     assert resp.status_code == 200
@@ -199,7 +198,7 @@ def test_orders_filter_by_status_no_match():
 
 
 def test_orders_with_created_order_pagination():
-    """Tạo order thật → kiểm tra pagination trả về đúng."""
+    """Create actual order → check pagination results."""
     headers = _auth_headers()
 
     mock_product = MagicMock(
@@ -237,7 +236,7 @@ def test_orders_with_created_order_pagination():
 
 
 def test_orders_filter_by_status_paid():
-    """Sau khi tạo order paid → filter status=paid trả về đúng 1 record."""
+    """After creating paid order → filter status=paid returns exactly 1 record."""
     headers = _auth_headers()
 
     mock_product = MagicMock(
@@ -270,6 +269,6 @@ def test_orders_filter_by_status_paid():
     resp_paid = client_order.get("/orders?status=paid", headers=headers)
     assert resp_paid.json()["total"] == 1
 
-    # Filter status=cancelled — không có
+    # Filter status=cancelled — should be empty
     resp_cancelled = client_order.get("/orders?status=cancelled", headers=headers)
     assert resp_cancelled.json()["total"] == 0
