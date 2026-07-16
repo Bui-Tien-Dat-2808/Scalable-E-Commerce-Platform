@@ -22,6 +22,7 @@ from services.common.consul import consul_client
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
+from services.common.error_handler import setup_error_handlers
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "user-service")
 SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
@@ -90,6 +91,7 @@ def _seed_admin():
 
 app = FastAPI(title="User Service", version="1.0.0", lifespan=lifespan)
 Instrumentator().instrument(app).expose(app)
+setup_error_handlers(app)
 
 Base.metadata.create_all(bind=engine)
 

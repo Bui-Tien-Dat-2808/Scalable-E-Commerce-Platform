@@ -11,6 +11,7 @@ from services.common.consul import consul_client
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
+from services.common.error_handler import setup_error_handlers
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "payment-service")
 SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Payment Service", version="1.0.0", lifespan=lifespan)
 # Expose /metrics
 Instrumentator().instrument(app).expose(app)
+setup_error_handlers(app)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -62,6 +64,15 @@ class PaymentCreateRequest(BaseModel):
     payment_method: str = Field("card", min_length=1, description="Payment method must not be empty")
 
 
+class PaymentResponse(BaseModel):
+    transaction_id: str
+    order_id: str
+    amount: float
+    currency: str
+    payment_method: str
+    status: str
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -74,8 +85,9 @@ def health_check():
     return {"service": "payment-service", "status": "ok"}
 
 
-@app.post("/payments/checkout")
+@app.post("/payments/checkout", response_model=PaymentResponse, tags=["Payments"])
 def create_payment_session(payload: PaymentCreateRequest, db: Session = Depends(get_db)):
+    """Xử lý thanh toán cho đơn hàng (Stripe mock)."""
     transaction_id = f"TXN-{uuid4().hex[:12].upper()}"
     status = (
         "approved"
@@ -93,32 +105,33 @@ def create_payment_session(payload: PaymentCreateRequest, db: Session = Depends(
     db.add(payment)
     db.commit()
     db.refresh(payment)
-    return _to_dict(payment)
+    return _to_response(payment)
 
 
-@app.get("/payments/{transaction_id}")
+@app.get("/payments/{transaction_id}", response_model=PaymentResponse, tags=["Payments"])
 def get_payment_status(transaction_id: str, db: Session = Depends(get_db)):
+    """Xem trạng thái giao dịch theo mã giao dịch (transaction_id)."""
     payment = db.query(PaymentModel).filter(PaymentModel.transaction_id == transaction_id).first()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
-    return _to_dict(payment)
+    return _to_response(payment)
 
 
-@app.get("/payments/by-order/{order_id}")
+@app.get("/payments/by-order/{order_id}", response_model=PaymentResponse, tags=["Payments"])
 def get_payment_by_order(order_id: str, db: Session = Depends(get_db)):
-    """Tra cứu payment theo order_id."""
+    """Xem trạng thái giao dịch theo mã đơn hàng (order_id)."""
     payment = db.query(PaymentModel).filter(PaymentModel.order_id == order_id).first()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found for this order")
-    return _to_dict(payment)
+    return _to_response(payment)
 
 
-def _to_dict(p: PaymentModel) -> dict:
-    return {
-        "transaction_id": p.transaction_id,
-        "order_id": p.order_id,
-        "amount": p.amount,
-        "currency": p.currency,
-        "payment_method": p.payment_method,
-        "status": p.status,
-    }
+def _to_response(p: PaymentModel) -> PaymentResponse:
+    return PaymentResponse(
+        transaction_id=p.transaction_id,
+        order_id=p.order_id,
+        amount=p.amount,
+        currency=p.currency,
+        payment_method=p.payment_method,
+        status=p.status,
+    )

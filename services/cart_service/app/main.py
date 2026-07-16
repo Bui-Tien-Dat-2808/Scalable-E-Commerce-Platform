@@ -11,6 +11,7 @@ from services.common.consul import consul_client
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
+from services.common.error_handler import setup_error_handlers
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "cart-service")
 SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Shopping Cart Service", version="1.0.0", lifespan=lifespan)
 # Expose /metrics
 Instrumentator().instrument(app).expose(app)
+setup_error_handlers(app)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -61,14 +63,24 @@ class CartUpdateRequest(BaseModel):
     quantity: int = Field(..., gt=0, description="Quantity must be greater than zero")
 
 
+class CartItemResponse(BaseModel):
+    product_id: int
+    quantity: int
+
+
+class CartResponse(BaseModel):
+    user_id: str
+    items: list[CartItemResponse]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _build_cart_response(user_id: str, db: Session) -> dict:
+def _build_cart_response(user_id: str, db: Session) -> CartResponse:
     items = db.query(CartItemModel).filter(CartItemModel.user_id == user_id).all()
-    return {
-        "user_id": user_id,
-        "items": [{"product_id": i.product_id, "quantity": i.quantity} for i in items],
-    }
+    return CartResponse(
+        user_id=user_id,
+        items=[CartItemResponse(product_id=i.product_id, quantity=i.quantity) for i in items],
+    )
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -83,17 +95,19 @@ def health_check():
     return {"service": "cart-service", "status": "ok"}
 
 
-@app.get("/cart")
+@app.get("/cart", response_model=CartResponse, tags=["Cart"])
 def get_cart(user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    """Xem giỏ hàng của người dùng hiện tại."""
     return _build_cart_response(user_id, db)
 
 
-@app.post("/cart/items")
+@app.post("/cart/items", response_model=CartResponse, tags=["Cart"])
 def add_to_cart(
     payload: CartItemRequest,
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    """Thêm sản phẩm vào giỏ hàng."""
     existing = db.query(CartItemModel).filter(
         CartItemModel.user_id == user_id,
         CartItemModel.product_id == payload.product_id,
@@ -106,32 +120,32 @@ def add_to_cart(
     return _build_cart_response(user_id, db)
 
 
-@app.put("/cart/items/{product_id}")
+@app.put("/cart/items/{product_id}", response_model=CartResponse, tags=["Cart"])
 def update_cart_item(
     product_id: int,
     payload: CartUpdateRequest,
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    """Cập nhật số lượng của một sản phẩm trong giỏ hàng."""
     item = db.query(CartItemModel).filter(
         CartItemModel.user_id == user_id,
         CartItemModel.product_id == product_id,
     ).first()
     if not item:
         raise HTTPException(status_code=404, detail="Product not found in cart")
-    if payload.quantity <= 0:
-        raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
     item.quantity = payload.quantity
     db.commit()
     return _build_cart_response(user_id, db)
 
 
-@app.delete("/cart/items/{product_id}")
+@app.delete("/cart/items/{product_id}", response_model=CartResponse, tags=["Cart"])
 def delete_cart_item(
     product_id: int,
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    """Xóa sản phẩm khỏi giỏ hàng."""
     item = db.query(CartItemModel).filter(
         CartItemModel.user_id == user_id,
         CartItemModel.product_id == product_id,

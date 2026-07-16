@@ -134,7 +134,7 @@ def test_create_order_insufficient_stock_returns_400():
             headers=headers,
         )
     assert resp.status_code == 400
-    assert "stock" in resp.json()["detail"].lower()
+    assert "stock" in resp.json()["error"]["message"].lower()
 
 
 def test_create_order_empty_items_returns_422():

@@ -86,7 +86,7 @@ def test_gateway_proxies_delete(monkeypatch):
 def test_gateway_unknown_service_returns_404():
     response = client.get("/unknownservice/something")
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"].lower()
+    assert "not found" in response.json()["error"]["message"].lower()
 
 
 def test_gateway_routes_users(monkeypatch):

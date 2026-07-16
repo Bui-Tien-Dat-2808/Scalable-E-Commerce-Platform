@@ -1,19 +1,20 @@
 import json
 import os
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, Response
 import httpx
 
 from services.common.consul import consul_client
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
+from services.common.error_handler import setup_error_handlers
 
 logger = setup_logger("api-gateway")
 
 app = FastAPI(title="API Gateway", version="1.0.0")
 # Expose /metrics
 Instrumentator().instrument(app).expose(app)
+setup_error_handlers(app)
 
 # Map URL path gateway -> Tên service tương ứng trên Consul
 PATH_TO_SERVICE = {
@@ -31,6 +32,10 @@ def build_target_path(service: str, path: str) -> str:
     # ── Global: health check luôn route về /health ────────────────────────
     if path == "health":
         return "/health"
+
+    # ── Global: Swagger UI và OpenAPI spec ────────────────────────────────
+    if path in {"docs", "openapi.json"}:
+        return f"/{path}"
 
     # ── Empty path: route về resource gốc của từng service ───────────────
     if not path:
@@ -123,9 +128,11 @@ async def proxy(service: str, path: str, request: Request):
 
     logger.info(f"Response from {service_name}: {response.status_code}")
 
-    try:
-        payload = response.json()
-    except (json.JSONDecodeError, ValueError):
-        payload = {"message": response.text}
-
-    return JSONResponse(status_code=response.status_code, content=payload)
+    # Trả về Response thô với đúng Content-Type của service đích
+    # (giúp trình duyệt render đúng HTML của Swagger hoặc JSON tùy endpoint)
+    media_type = response.headers.get("content-type") if hasattr(response, "headers") else "application/json"
+    return Response(
+        content=response.content,
+        status_code=response.status_code,
+        media_type=media_type,
+    )

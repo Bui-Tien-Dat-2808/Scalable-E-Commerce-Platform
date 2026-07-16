@@ -12,6 +12,7 @@ from services.common.security import require_admin
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
+from services.common.error_handler import setup_error_handlers
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "product-service")
 SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Product Catalog Service", version="1.0.0", lifespan=lifespan)
 Instrumentator().instrument(app).expose(app)
+setup_error_handlers(app)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────

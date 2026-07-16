@@ -14,6 +14,7 @@ from services.common.consul import consul_client
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
+from services.common.error_handler import setup_error_handlers
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "order-service")
 SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Order Service", version="1.0.0", lifespan=lifespan)
 # Expose /metrics
 Instrumentator().instrument(app).expose(app)
+setup_error_handlers(app)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -83,6 +85,34 @@ class OrderCreateRequest(BaseModel):
     recipient_email: str | None = None
 
 
+class OrderItemResponse(BaseModel):
+    product_id: int
+    name: str
+    price: float
+    quantity: int
+    subtotal: float
+
+
+class OrderResponse(BaseModel):
+    id: int
+    order_id: str
+    user_id: str
+    status: str
+    total_amount: float
+    currency: str
+    transaction_id: Optional[str] = None
+    payment_status: Optional[str] = None
+    items: list[OrderItemResponse]
+
+
+class PaginatedOrderResponse(BaseModel):
+    data: list[OrderResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
 # ── Inter-service HTTP helpers ────────────────────────────────────────────────
 
 def _fetch_product(product_id: int) -> dict:
@@ -109,7 +139,9 @@ def _deduct_stock(product_id: int, quantity: int) -> None:
             timeout=5.0,
         )
         if resp.status_code == 409:
-            raise HTTPException(status_code=400, detail=resp.json().get("detail", "Insufficient stock"))
+            err_data = resp.json()
+            err_msg = err_data.get("error", {}).get("message") or err_data.get("detail", "Insufficient stock")
+            raise HTTPException(status_code=400, detail=err_msg)
         if resp.status_code == 404:
             raise HTTPException(status_code=400, detail=f"Product {product_id} not found")
         resp.raise_for_status()
@@ -160,12 +192,13 @@ def health_check():
     return {"service": "order-service", "status": "ok"}
 
 
-@app.post("/orders", status_code=201)
+@app.post("/orders", status_code=201, response_model=OrderResponse, tags=["Orders"])
 def create_order(
     payload: OrderCreateRequest,
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    """Tạo đơn hàng mới (Trừ tồn kho -> Thanh toán -> Gửi thông báo)."""
     if not payload.items:
         raise HTTPException(status_code=400, detail="Order must contain at least one item")
 
@@ -252,10 +285,10 @@ def create_order(
                            f"Order {order.order_ref} payment failed. Please try again.",
                            f"Order {order.order_ref} Payment Failed")
 
-    return _order_to_dict(order, items_detail)
+    return _order_to_response(order, [OrderItemResponse(**i) for i in items_detail])
 
 
-@app.get("/orders")
+@app.get("/orders", response_model=PaginatedOrderResponse, tags=["Orders"])
 def list_orders(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -263,33 +296,42 @@ def list_orders(
     limit: int = Query(20, ge=1, le=100, description="Số item mỗi trang"),
     status: Optional[str] = Query(None, description="Lọc theo trạng thái đơn hàng"),
 ):
+    """Xem danh sách đơn hàng của người dùng (Có phân trang và lọc)."""
     query = db.query(OrderModel).filter(OrderModel.user_id == user_id)
     if status:
         query = query.filter(OrderModel.status == status)
     total = query.count()
     pages = max(1, -(-total // limit))
     orders = query.offset((page - 1) * limit).limit(limit).all()
-    return {
-        "data": [_order_to_dict(o, _get_items(o.id, db)) for o in orders],
-        "total": total,
-        "page": page,
-        "limit": limit,
-        "pages": pages,
-    }
+    
+    data = []
+    for o in orders:
+        items = _get_items(o.id, db)
+        data.append(_order_to_response(o, items))
+        
+    return PaginatedOrderResponse(
+        data=data,
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages,
+    )
 
 
-@app.get("/orders/{order_id}")
+@app.get("/orders/{order_id}", response_model=OrderResponse, tags=["Orders"])
 def get_order(order_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    """Xem chi tiết một đơn hàng (Chính chủ)."""
     order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.user_id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
-    return _order_to_dict(order, _get_items(order.id, db))
+    return _order_to_response(order, _get_items(order.id, db))
 
 
-@app.patch("/orders/{order_id}/cancel")
+@app.patch("/orders/{order_id}/cancel", response_model=OrderResponse, tags=["Orders"])
 def cancel_order(order_id: int, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    """Hủy một đơn hàng (Chính chủ)."""
     order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -307,26 +349,31 @@ def cancel_order(order_id: int, user_id: str = Depends(get_current_user_id), db:
         f"Order {order.order_ref} has been cancelled.",
         f"Order {order.order_ref} Cancelled",
     )
-    return _order_to_dict(order, _get_items(order.id, db))
+    return _order_to_response(order, _get_items(order.id, db))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_items(order_id: int, db: Session) -> list[dict]:
+def _get_items(order_id: int, db: Session) -> list[OrderItemResponse]:
     items = db.query(OrderItemModel).filter(OrderItemModel.order_id == order_id).all()
-    return [{"product_id": i.product_id, "name": i.product_name,
-             "price": i.price, "quantity": i.quantity, "subtotal": i.subtotal} for i in items]
+    return [OrderItemResponse(
+        product_id=i.product_id,
+        name=i.product_name,
+        price=i.price,
+        quantity=i.quantity,
+        subtotal=i.subtotal
+    ) for i in items]
 
 
-def _order_to_dict(order: OrderModel, items: list[dict]) -> dict:
-    return {
-        "id": order.id,
-        "order_id": order.order_ref,
-        "user_id": order.user_id,
-        "status": order.status,
-        "total_amount": order.total_amount,
-        "currency": order.currency,
-        "transaction_id": order.transaction_id,
-        "payment_status": order.payment_status,
-        "items": items,
-    }
+def _order_to_response(order: OrderModel, items: list[OrderItemResponse]) -> OrderResponse:
+    return OrderResponse(
+        id=order.id,
+        order_id=order.order_ref,
+        user_id=order.user_id,
+        status=order.status,
+        total_amount=order.total_amount,
+        currency=order.currency,
+        transaction_id=order.transaction_id,
+        payment_status=order.payment_status,
+        items=items,
+    )

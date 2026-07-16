@@ -175,7 +175,7 @@ class TestFullOrderFlow:
             )
 
         assert resp.status_code == 400
-        assert "stock" in resp.json()["detail"].lower()
+        assert "stock" in resp.json()["error"]["message"].lower()
 
     def test_cancel_order_changes_status(self):
         """User có thể cancel order, status = cancelled."""

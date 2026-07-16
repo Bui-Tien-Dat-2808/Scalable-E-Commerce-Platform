@@ -2,7 +2,7 @@ import os
 from uuid import uuid4
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Column, String
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from services.common.consul import consul_client
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from services.common.logging import setup_logger
+from services.common.error_handler import setup_error_handlers
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "notification-service")
 SERVICE_HOST = os.getenv("SERVICE_HOST", "localhost")
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Notification Service", version="1.0.0", lifespan=lifespan)
 # Expose /metrics
 Instrumentator().instrument(app).expose(app)
+setup_error_handlers(app)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -56,11 +58,21 @@ Base.metadata.create_all(bind=engine)
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class NotificationCreateRequest(BaseModel):
-    channel: str = "email"
+    channel: str = Field("email", min_length=1)
+    recipient: str = Field(..., min_length=1, description="Recipient must not be empty")
+    subject: str | None = None
+    message: str = Field(..., min_length=1, description="Message body must not be empty")
+    event_type: str | None = None
+
+
+class NotificationResponse(BaseModel):
+    notification_id: str
+    channel: str
     recipient: str
     subject: str | None = None
     message: str
     event_type: str | None = None
+    status: str
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -75,8 +87,9 @@ def health_check():
     return {"service": "notification-service", "status": "ok"}
 
 
-@app.post("/notifications")
+@app.post("/notifications", response_model=NotificationResponse, tags=["Notifications"])
 def create_notification(payload: NotificationCreateRequest, db: Session = Depends(get_db)):
+    """Gửi thông báo (Email / SMS mock)."""
     notification_id = f"NTF-{uuid4().hex[:12].upper()}"
     status = "queued" if payload.recipient and payload.message else "failed"
     notification = NotificationModel(
@@ -91,24 +104,25 @@ def create_notification(payload: NotificationCreateRequest, db: Session = Depend
     db.add(notification)
     db.commit()
     db.refresh(notification)
-    return _to_dict(notification)
+    return _to_response(notification)
 
 
-@app.get("/notifications/{notification_id}")
+@app.get("/notifications/{notification_id}", response_model=NotificationResponse, tags=["Notifications"])
 def get_notification(notification_id: str, db: Session = Depends(get_db)):
+    """Tra cứu trạng thái của một thông báo theo mã ID."""
     notification = db.query(NotificationModel).filter(NotificationModel.id == notification_id).first()
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
-    return _to_dict(notification)
+    return _to_response(notification)
 
 
-def _to_dict(n: NotificationModel) -> dict:
-    return {
-        "notification_id": n.id,
-        "channel": n.channel,
-        "recipient": n.recipient,
-        "subject": n.subject,
-        "message": n.message,
-        "event_type": n.event_type,
-        "status": n.status,
-    }
+def _to_response(n: NotificationModel) -> NotificationResponse:
+    return NotificationResponse(
+        notification_id=n.id,
+        channel=n.channel,
+        recipient=n.recipient,
+        subject=n.subject,
+        message=n.message,
+        event_type=n.event_type,
+        status=n.status,
+    )
